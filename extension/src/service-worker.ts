@@ -4,10 +4,14 @@
  * active tab — but only after the deterministic permission gate allows it.
  */
 import {
+  type ActRequest,
   type BridgeMessage,
   BridgeMessageSchema,
+  type Diff,
   type Ref,
+  type Sentinel,
   type SentinelKind,
+  type Verdict,
 } from "@browsight/shared";
 import { listGrants } from "./permissions.ts";
 import { decideAccess } from "./policy.ts";
@@ -79,6 +83,8 @@ async function handleMessage(raw: string): Promise<void> {
   }
   if (msg.type === "read.request") {
     await handleRead(msg.id);
+  } else if (msg.type === "act.request") {
+    await handleAct(msg);
   }
 }
 
@@ -124,6 +130,78 @@ function sendSentinel(id: string, kind: SentinelKind, hint: string): void {
     markdown: "",
     refs: [],
     hasPasswordField: false,
+    sentinel: { kind, hint },
+  });
+}
+
+interface ActContentResult {
+  readonly verdict: Verdict;
+  readonly diff: Diff;
+  readonly refs: Ref[];
+  readonly sentinel?: Sentinel;
+}
+
+async function handleAct(msg: ActRequest): Promise<void> {
+  const tab = await activeTab();
+  if (!tab?.id || !tab.url) {
+    sendActSentinel(msg.id, "frame_unreachable", "no active tab to act on");
+    return;
+  }
+  const origin = originOf(tab.url);
+  const access = decideAccess(await listGrants(), origin, Date.now());
+  if (!access.act) {
+    sendActSentinel(
+      msg.id,
+      "not_whitelisted",
+      `${origin} is not set to "Full control" — change its access in the browsight popup.`,
+    );
+    return;
+  }
+
+  if (msg.action === "navigate") {
+    if (!msg.value) {
+      sendActSentinel(msg.id, "not_actionable", "navigate needs a url value");
+      return;
+    }
+    await chrome.tabs.update(tab.id, { url: msg.value });
+    send({
+      type: "act.response",
+      id: msg.id,
+      verdict: "navigated",
+      diff: { appeared: [], removed: [], changed: [] },
+      refs: [],
+    });
+    return;
+  }
+
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+    const result = (await chrome.tabs.sendMessage(tab.id, {
+      kind: "act",
+      ref: msg.ref,
+      action: msg.action,
+      value: msg.value,
+    })) as ActContentResult;
+    send({
+      type: "act.response",
+      id: msg.id,
+      verdict: result.verdict,
+      diff: result.diff,
+      refs: result.refs,
+      ...(result.sentinel ? { sentinel: result.sentinel } : {}),
+    });
+  } catch (err) {
+    sendActSentinel(msg.id, "frame_unreachable", `could not act on the page: ${String(err)}`);
+  }
+}
+
+function sendActSentinel(id: string, kind: SentinelKind, hint: string): void {
+  send({
+    type: "act.response",
+    id,
+    verdict: "no_change",
+    diff: { appeared: [], removed: [], changed: [] },
+    refs: [],
     sentinel: { kind, hint },
   });
 }

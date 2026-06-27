@@ -10,6 +10,7 @@ export interface SnapshotResult {
   readonly markdown: string;
   readonly refs: Ref[];
   readonly hasPasswordField: boolean;
+  readonly elements: Map<number, Element>;
 }
 
 const SKIP_TAGS = new Set(["script", "style", "noscript", "template", "svg"]);
@@ -38,6 +39,7 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
   let line = "";
   let nextId = 1;
   let hasPasswordField = false;
+  const elements = new Map<number, Element>();
 
   const title = doc.title.trim();
   if (title) {
@@ -77,6 +79,7 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
       roleCounts.set(role, ordinal + 1);
       const id = nextId++;
       refs.push({ id, role, name, recipe: makeRecipe(el, role, name, ordinal) });
+      elements.set(id, el);
       out.push(`[${role} ${JSON.stringify(name)} #${id}]`);
       return;
     }
@@ -108,5 +111,5 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  return { markdown, refs, hasPasswordField };
+  return { markdown, refs, hasPasswordField, elements };
 }

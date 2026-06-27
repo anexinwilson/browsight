@@ -6,7 +6,13 @@
  * the first frame must be a matching auth token or the socket is dropped.
  */
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { type BridgeMessage, BridgeMessageSchema, type ReadResponse } from "@browsight/shared";
+import {
+  type ActResponse,
+  type Action,
+  type BridgeMessage,
+  BridgeMessageSchema,
+  type ReadResponse,
+} from "@browsight/shared";
 import { type WebSocket, WebSocketServer } from "ws";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -22,6 +28,8 @@ interface Pending {
 export interface Bridge {
   /** Ask the extension to read the active tab, optionally navigating to `url` first. */
   readActiveTab(url: string | null): Promise<ReadResponse>;
+  /** Ask the extension to perform one action on the active tab. */
+  actActiveTab(req: { ref: string; action: Action; value?: string }): Promise<ActResponse>;
   close(): Promise<void>;
 }
 
@@ -95,6 +103,17 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
       const id = randomUUID();
       const res = await request({ type: "read.request", id, url, schema: null }, id);
       return res as ReadResponse;
+    },
+    async actActiveTab(req) {
+      const id = randomUUID();
+      const message: BridgeMessage = {
+        type: "act.request",
+        id,
+        ref: req.ref,
+        action: req.action,
+        ...(req.value !== undefined ? { value: req.value } : {}),
+      };
+      return (await request(message, id)) as ActResponse;
     },
     close() {
       return new Promise((resolve) => {
