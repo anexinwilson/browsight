@@ -242,7 +242,7 @@ Coverage targets the logic that matters, not maximization.
 
 ## 15. Engineering practices (present from the first commit)
 
-The discipline that lives *in the code* is part of the MVP: TypeScript `strict` with no `any`; `zod` validation at every boundary; ESM; pure logic separated from I/O; Biome lint/format; Conventional Commits; the monorepo layout; and `LICENSE` / `.gitignore` / `.nvmrc`. The CI and automation that run *around* the code (GitHub Actions, security scanning, release tooling) are deferred to a later iteration.
+The discipline that lives *in the code* is part of the MVP: TypeScript `strict` with no `any`; `zod` validation at every boundary; ESM; pure logic separated from I/O; current, non-deprecated library and platform APIs; Biome lint/format; Conventional Commits; the monorepo layout; and `LICENSE` / `.gitignore` / `.nvmrc`. The CI and automation that run *around* the code (GitHub Actions, security scanning, release tooling) are deferred to a later iteration.
 
 ---
 

@@ -156,6 +156,8 @@ Pure logic — snapshot builder, role/name resolution, reference matcher, secret
 
 **Module hygiene.** ESM throughout (`"type": "module"`), named exports (no default exports), one responsibility per file, pure functions separated from I/O, and JSDoc on every exported function. Biome and `.editorconfig` keep formatting identical across editors.
 
+**Current, non-deprecated APIs.** Code uses current library and platform APIs and avoids deprecated ones — for example the MCP SDK's `registerTool` (not the deprecated `server.tool`), Manifest V3 `chrome.scripting`/`chrome.action` (not the removed MV2 equivalents), the promise-based `chrome.*` APIs (not callbacks), and `Buffer.from` (not `new Buffer`). A deprecated call is treated as a defect to fix, not a thing to carry.
+
 ---
 
 ## 11. Architecture decision records
