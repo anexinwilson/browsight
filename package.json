@@ -8,13 +8,15 @@
   "engines": {
     "node": ">=24"
   },
-  "workspaces": ["shared", "server", "extension"],
+  "workspaces": ["shared", "server", "extension", "scripts"],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "node --test \"**/*.test.ts\""
+    "test": "node --test \"**/*.test.ts\"",
+    "setup": "node scripts/setup.ts",
+    "doctor": "node scripts/setup.ts doctor"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
