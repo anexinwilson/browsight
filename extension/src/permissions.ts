@@ -19,12 +19,19 @@ export async function saveGrants(grants: Grant[]): Promise<void> {
   await chrome.storage.local.set({ [STORAGE_KEY]: grants });
 }
 
-/** Add or replace a grant for an origin and request the matching Chrome host permission. */
-export async function grantSite(grant: Grant): Promise<void> {
-  await chrome.permissions.request({ origins: [`${grant.origin}/*`] });
+/**
+ * Add or replace a grant for an origin, requesting the matching Chrome host permission first.
+ * Returns false (and saves nothing) if the user declines the browser prompt.
+ */
+export async function grantSite(grant: Grant): Promise<boolean> {
+  const granted = await chrome.permissions.request({ origins: [`${grant.origin}/*`] });
+  if (!granted) {
+    return false;
+  }
   const grants = (await listGrants()).filter((g) => g.origin !== grant.origin);
   grants.push(grant);
   await saveGrants(grants);
+  return true;
 }
 
 /** Remove a grant and drop the matching host permission. */

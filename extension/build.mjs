@@ -18,11 +18,13 @@ await build({
 
 await build({
   ...common,
-  entryPoints: { content: "src/content.ts" },
+  entryPoints: { content: "src/content.ts", popup: "src/popup.ts", options: "src/options.ts" },
   outdir,
   format: "iife",
 });
 
 await copyFile("src/manifest.json", `${outdir}/manifest.json`);
+await copyFile("src/popup.html", `${outdir}/popup.html`);
+await copyFile("src/options.html", `${outdir}/options.html`);
 
 console.log("extension built to ./dist");

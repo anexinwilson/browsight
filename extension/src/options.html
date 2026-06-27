@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>browsight — allowed sites</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+      h1 { font-size: 18px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; font-size: 13px; }
+      .add { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+      input, select, button { font: inherit; padding: 6px 8px; }
+      input { flex: 1; min-width: 200px; }
+      .muted { color: #777; font-size: 13px; }
+      #status { color: #a32d2d; font-size: 13px; min-height: 18px; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <h1>browsight — allowed sites</h1>
+    <p class="muted">
+      Sites browsight may read or act on. Each grant is enforced by Chrome's own permission system
+      and stored locally, outside the model's reach.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Site</th><th>Access</th><th>Expires</th><th></th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="add">
+      <input id="origin" placeholder="https://example.com" />
+      <select id="tier">
+        <option value="read">Read only</option>
+        <option value="full">Full control</option>
+      </select>
+      <select id="timer"></select>
+      <button id="add">Add site</button>
+    </div>
+    <div id="status"></div>
+    <script src="options.js"></script>
+  </body>
+</html>
