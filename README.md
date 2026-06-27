@@ -32,6 +32,23 @@ npm run build
 
 Setup and load-unpacked steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Try it
+
+```
+npm install
+npm run build
+npm run setup        # configures the server + extension connection, prints the next step
+```
+
+Then load the extension: open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select `extension/dist`. Restart your MCP client.
+
+In Chrome, open the **browsight** toolbar popup and grant the current site (read-only or full control, with an optional timer). Then, from your MCP client:
+
+- **`browser_read`** — returns the current tab as clean markdown with `#`-numbered references.
+- **`browser_act`** — act by reference, e.g. click `#5` or fill `#6` with a value; returns a verdict and a diff of what changed.
+
+Run `npm run doctor` any time to check the connection.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
