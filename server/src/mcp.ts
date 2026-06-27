@@ -5,7 +5,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Bridge } from "./bridge.ts";
-import { estimateTokens, stripSecrets } from "./extract.ts";
+import { estimateTokens, isLoginWall, stripSecrets } from "./extract.ts";
 
 /** Build the MCP server, wiring `browser_read` to the bridge. */
 export function createMcpServer(bridge: Bridge): McpServer {
@@ -19,6 +19,16 @@ export function createMcpServer(bridge: Bridge): McpServer {
       const res = await bridge.readActiveTab(url ?? null);
       if (res.sentinel) {
         return { content: [{ type: "text" as const, text: `🔒 ${res.sentinel.hint}` }] };
+      }
+      if (isLoginWall({ title: "", text: res.markdown, hasPasswordField: res.hasPasswordField })) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "🔒 You appear to be signed out here — sign in, then ask me to read again.",
+            },
+          ],
+        };
       }
       const body = stripSecrets(res.markdown);
       const header = `Token estimate: ~${estimateTokens(body)}`;

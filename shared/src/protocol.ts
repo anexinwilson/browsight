@@ -71,7 +71,7 @@ export const ReadResponseSchema = z.object({
   id: z.string(),
   markdown: z.string(),
   refs: z.array(RefSchema),
-  tokenEstimate: z.number().int(),
+  hasPasswordField: z.boolean().default(false),
   sentinel: SentinelSchema.optional(),
 });
 export type ReadResponse = z.infer<typeof ReadResponseSchema>;

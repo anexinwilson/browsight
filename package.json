@@ -8,7 +8,7 @@
   "engines": {
     "node": ">=24"
   },
-  "workspaces": ["shared", "server"],
+  "workspaces": ["shared", "server", "extension"],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",

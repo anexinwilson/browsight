@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "browsight",
+  "version": "0.0.0",
+  "description": "Read and act on your real, logged-in Chrome from an MCP client.",
+  "minimum_chrome_version": "116",
+  "permissions": ["scripting", "storage", "alarms", "tabs"],
+  "optional_host_permissions": ["*://*/*"],
+  "background": { "service_worker": "service-worker.js", "type": "module" }
+}
