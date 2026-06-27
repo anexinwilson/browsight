@@ -1,6 +1,6 @@
 /**
  * The MCP surface. Registers the tools the client calls and turns bridge responses into
- * token-lean results. Registers `browser_read` and `browser_act`.
+ * token-lean results: `browser_read` and `browser_act`.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -11,10 +11,13 @@ import { estimateTokens, isLoginWall, stripSecrets } from "./extract.ts";
 export function createMcpServer(bridge: Bridge): McpServer {
   const server = new McpServer({ name: "browsight", version: "0.0.0" });
 
-  server.tool(
+  server.registerTool(
     "browser_read",
-    "Read the current Chrome tab as clean, structured context (markdown plus interactive references). Uses your real, logged-in session.",
-    { url: z.string().optional() },
+    {
+      description:
+        "Read the current Chrome tab as clean, structured context (markdown plus interactive references). Uses your real, logged-in session.",
+      inputSchema: { url: z.string().optional() },
+    },
     async ({ url }) => {
       const res = await bridge.readActiveTab(url ?? null);
       if (res.sentinel) {
@@ -36,13 +39,16 @@ export function createMcpServer(bridge: Bridge): McpServer {
     },
   );
 
-  server.tool(
+  server.registerTool(
     "browser_act",
-    "Perform one action on the current tab by reference (from a prior browser_read), then return a typed verdict and a diff of what changed.",
     {
-      ref: z.string(),
-      action: z.enum(["click", "fill", "navigate", "scroll"]),
-      value: z.string().optional(),
+      description:
+        "Perform one action on the current tab by reference (from a prior browser_read), then return a typed verdict and a diff of what changed.",
+      inputSchema: {
+        ref: z.string(),
+        action: z.enum(["click", "fill", "navigate", "scroll"]),
+        value: z.string().optional(),
+      },
     },
     async ({ ref, action, value }) => {
       const res = await bridge.actActiveTab({
