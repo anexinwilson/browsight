@@ -1,0 +1,25 @@
+{
+  "name": "browsight",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A universal, permissioned read-and-act tool that exposes your real, authenticated Chrome to any MCP client.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": ["shared", "server"],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "node --test \"**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.22.3",
+    "typescript": "^5.7.0"
+  }
+}
