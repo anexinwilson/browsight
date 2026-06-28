@@ -47,6 +47,7 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
   let line = "";
   let nextId = 1;
   let hasPasswordField = false;
+  let lastRefName = "";
   const elements = new Map<number, Element>();
 
   const title = doc.title.trim();
@@ -58,6 +59,7 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
     const text = line.replace(/\s+/g, " ").trim();
     if (text) {
       out.push(text);
+      lastRefName = "";
     }
     line = "";
   }
@@ -100,6 +102,7 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
       });
       elements.set(id, el);
       out.push(`[${role} ${JSON.stringify(name)} #${id}]`);
+      lastRefName = name;
       return;
     }
 
@@ -107,9 +110,17 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
       flush();
       const level = Number(tag.charAt(1));
       const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+      // Card titles are frequently both a clickable ref and a heading with identical text (job
+      // boards, search results, news indexes). If this heading just repeats the interactive ref
+      // emitted immediately before it, drop it — the ref already carries the title and is clickable.
+      if (text && text === lastRefName) {
+        lastRefName = "";
+        return;
+      }
       if (text) {
         out.push(`${"#".repeat(level)} ${text}`);
       }
+      lastRefName = "";
       return;
     }
 
