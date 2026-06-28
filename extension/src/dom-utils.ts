@@ -56,12 +56,17 @@ export function safeName(el: Element): string {
   }
 }
 
-/** True if the element is something the agent can act on. */
+// Natively-interactive elements. Deliberately NOT bare `[role]` / `[tabindex]`: those match
+// landmark/container elements (role="main", tabindex="-1") whose subtree must be walked, not skipped.
+const NATIVE_INTERACTIVE =
+  "a[href],button,input,select,textarea,[contenteditable='true'],[contenteditable='']";
+
+/** True if the element is something the agent can act on (not a mere container/landmark). */
 export function isInteractive(el: Element): boolean {
   if (ACTIONABLE_ROLES.has(safeRole(el))) {
     return true;
   }
-  return el.matches(INTERACTIVE_SELECTOR);
+  return el.matches(NATIVE_INTERACTIVE);
 }
 
 /** Build the durable recipe used to re-resolve a reference at act time. */
