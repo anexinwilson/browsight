@@ -34,6 +34,11 @@ export function isHidden(el: Element): boolean {
   if (style && (style.display === "none" || style.visibility === "hidden")) {
     return true;
   }
+  // `display: contents` elements generate no box of their own (a 0×0 rect) but their children DO
+  // render — so the zero-size check below must not treat them, or their subtree, as hidden.
+  if (style?.display === "contents") {
+    return false;
+  }
   const rect = (el as HTMLElement).getBoundingClientRect?.();
   return rect ? rect.width === 0 && rect.height === 0 : false;
 }
