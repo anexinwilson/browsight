@@ -89,8 +89,11 @@ function readJson(path: string): Record<string, unknown> {
 }
 
 async function runSetup(): Promise<void> {
-  const token = generateToken();
-  const port = await pickPort(8137);
+  // Reuse the existing token + port if setup has run before, so re-running never moves the port out
+  // from under a server that is already using it (the cause of ERR_CONNECTION_REFUSED on re-setup).
+  const existing = readJson(bridgeConfigPath());
+  const token = typeof existing.token === "string" ? existing.token : generateToken();
+  const port = typeof existing.port === "number" ? existing.port : await pickPort(8137);
 
   writeJson(bridgeConfigPath(), { port, token });
   writeJson(join(EXTENSION_DIST, "connection.json"), { port, token });
