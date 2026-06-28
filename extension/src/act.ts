@@ -127,6 +127,12 @@ export async function performAct(ref: string, action: Action, value?: string): P
     case "click":
       if (el instanceof HTMLElement) {
         el.click();
+      } else {
+        // SVG-rooted and other non-HTML controls have no .click() — dispatch a real click event so
+        // the action lands instead of silently no-op'ing into a misleading "no_change".
+        el.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, view: window }),
+        );
       }
       break;
     case "fill":
