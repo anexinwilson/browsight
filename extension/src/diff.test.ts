@@ -3,11 +3,12 @@ import { test } from "node:test";
 import type { Ref } from "@browsight/shared";
 import { computeDiff, selectVerdict } from "./diff.ts";
 
-const ref = (id: number, role: string, name: string): Ref => ({
+const ref = (id: number, role: string, name: string, state?: string): Ref => ({
   id,
   role,
   name,
   recipe: { role, name, dataAttrs: {}, text: "", ordinal: 0 },
+  ...(state !== undefined ? { state } : {}),
 });
 
 test("computeDiff reports appeared and removed interactive elements", () => {
@@ -15,6 +16,16 @@ test("computeDiff reports appeared and removed interactive elements", () => {
   const after = [ref(1, "button", "Compose"), ref(2, "button", "Send")];
   const d = computeDiff(before, after);
   assert.deepEqual(d.appeared, ['button "Send"']);
+  assert.deepEqual(d.removed, []);
+  assert.deepEqual(d.changed, []);
+});
+
+test("computeDiff reports a state change on a persistent element", () => {
+  const before = [ref(1, "button", "Menu", "aria-expanded=false")];
+  const after = [ref(1, "button", "Menu", "aria-expanded=true")];
+  const d = computeDiff(before, after);
+  assert.deepEqual(d.changed, ['button "Menu"']);
+  assert.deepEqual(d.appeared, []);
   assert.deepEqual(d.removed, []);
 });
 

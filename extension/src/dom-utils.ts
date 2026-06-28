@@ -61,6 +61,43 @@ export function safeName(el: Element): string {
   }
 }
 
+const STATE_ATTRS = [
+  "aria-pressed",
+  "aria-expanded",
+  "aria-checked",
+  "aria-selected",
+  "aria-current",
+  "aria-disabled",
+  "aria-invalid",
+];
+
+/**
+ * A compact, value-free fingerprint of an element's interactive state, used to detect that an
+ * existing control changed after an action (a toggle flipped, a section expanded, a box checked).
+ * Deliberately omits raw input values so a user's typed text/secrets never travel in a reference.
+ */
+export function elementState(el: Element): string {
+  const parts: string[] = [];
+  for (const attr of STATE_ATTRS) {
+    const value = el.getAttribute(attr);
+    if (value !== null) {
+      parts.push(`${attr}=${value}`);
+    }
+  }
+  if (el instanceof HTMLInputElement) {
+    if (el.type === "checkbox" || el.type === "radio") {
+      parts.push(`checked=${el.checked}`);
+    } else if (el.type !== "password") {
+      parts.push(el.value ? "filled" : "empty");
+    }
+  } else if (el instanceof HTMLTextAreaElement) {
+    parts.push(el.value ? "filled" : "empty");
+  } else if (el instanceof HTMLSelectElement) {
+    parts.push(`selected=${el.selectedIndex}`);
+  }
+  return parts.join(" ");
+}
+
 // Natively-interactive elements. Deliberately NOT bare `[role]` / `[tabindex]`: those match
 // landmark/container elements (role="main", tabindex="-1") whose subtree must be walked, not skipped.
 const NATIVE_INTERACTIVE =

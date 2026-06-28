@@ -24,6 +24,8 @@ export const RefSchema = z.object({
   role: z.string(),
   name: z.string(),
   recipe: RecipeSchema,
+  /** A compact, value-free fingerprint of interactive state, used to detect changes after an act. */
+  state: z.string().optional(),
 });
 export type Ref = z.infer<typeof RefSchema>;
 

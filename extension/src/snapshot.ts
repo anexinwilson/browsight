@@ -4,7 +4,14 @@
  * per reference. This is the one representation used for both reading and (later) acting.
  */
 import type { Ref } from "@browsight/shared";
-import { isHidden, isInteractive, makeRecipe, safeName, safeRole } from "./dom-utils.ts";
+import {
+  elementState,
+  isHidden,
+  isInteractive,
+  makeRecipe,
+  safeName,
+  safeRole,
+} from "./dom-utils.ts";
 
 export interface SnapshotResult {
   readonly markdown: string;
@@ -78,7 +85,14 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
       const ordinal = roleCounts.get(role) ?? 0;
       roleCounts.set(role, ordinal + 1);
       const id = nextId++;
-      refs.push({ id, role, name, recipe: makeRecipe(el, role, name, ordinal) });
+      const state = elementState(el);
+      refs.push({
+        id,
+        role,
+        name,
+        recipe: makeRecipe(el, role, name, ordinal),
+        ...(state ? { state } : {}),
+      });
       elements.set(id, el);
       out.push(`[${role} ${JSON.stringify(name)} #${id}]`);
       return;
