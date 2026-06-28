@@ -1,9 +1,9 @@
+import { TIMER_OPTIONS, type Tier } from "./permissions/policy.ts";
 /**
  * The options page: manage every grant in a table, and add a site by URL. The pure decisions live
  * in `policy.ts`; this page is the management UI over `chrome.storage` + host permissions.
  */
-import { grantSite, listGrants, revokeSite } from "./permissions.ts";
-import { TIMER_OPTIONS, type Tier } from "./policy.ts";
+import { grantSite, listGrants, revokeSite } from "./permissions/storage.ts";
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);

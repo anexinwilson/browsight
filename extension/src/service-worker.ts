@@ -13,8 +13,8 @@ import {
   type SentinelKind,
   type Verdict,
 } from "@browsight/shared";
-import { listGrants } from "./permissions.ts";
-import { decideAccess } from "./policy.ts";
+import { decideAccess } from "./permissions/policy.ts";
+import { listGrants } from "./permissions/storage.ts";
 
 interface Connection {
   readonly port: number;

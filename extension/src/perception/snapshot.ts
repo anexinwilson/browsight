@@ -4,15 +4,9 @@
  * per reference. This is the one representation used for both reading and (later) acting.
  */
 import type { Ref } from "@browsight/shared";
-import {
-  elementState,
-  fallbackName,
-  isHidden,
-  isInteractive,
-  makeRecipe,
-  safeName,
-  safeRole,
-} from "./dom-utils.ts";
+import { elementState, fallbackName, safeName, safeRole } from "./accessibility.ts";
+import { isHidden, isInteractive } from "./dom.ts";
+import { makeRecipe } from "./recipe.ts";
 
 export interface SnapshotResult {
   readonly markdown: string;

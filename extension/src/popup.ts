@@ -1,10 +1,10 @@
+import { TIMER_OPTIONS, type Tier } from "./permissions/policy.ts";
 /**
  * The toolbar popup: grant the current site a tier (read-only / full-control) with an optional
  * timer, and manage existing grants. Runs `chrome.permissions.request` from the button click (a
  * user gesture), so Chrome's native host-permission prompt is shown.
  */
-import { grantSite, listGrants, revokeSite } from "./permissions.ts";
-import { TIMER_OPTIONS, type Tier } from "./policy.ts";
+import { grantSite, listGrants, revokeSite } from "./permissions/storage.ts";
 
 let selectedTier: Tier = "full";
 

@@ -4,8 +4,9 @@
  * listeners are registered only on the first run.
  */
 import type { Action, Diff, Ref, Sentinel, Verdict } from "@browsight/shared";
-import { performAct, rememberSnapshot } from "./act.ts";
-import { buildSnapshot } from "./snapshot.ts";
+import { performAct } from "./acting/act.ts";
+import { rememberSnapshot } from "./acting/resolve.ts";
+import { buildSnapshot } from "./perception/snapshot.ts";
 
 interface ReadResult {
   readonly markdown: string;
