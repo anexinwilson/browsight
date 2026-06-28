@@ -43,11 +43,16 @@ export function createMcpServer(bridge: Bridge): McpServer {
     "browser_act",
     {
       description:
-        "Perform one action on the current tab by reference (from a prior browser_read), then return a typed verdict and a diff of what changed.",
+        "Perform one action on the current tab and return a typed verdict plus a diff of what changed. Pass a `ref` from a prior browser_read; `fill` takes its text in `value`, `navigate` takes a URL in `value`, and `scroll` takes a direction in `value` (up/down/top/bottom) to page the viewport and reach lazily-loaded content like comments or infinite feeds.",
       inputSchema: {
         ref: z.string(),
         action: z.enum(["click", "fill", "navigate", "scroll"]),
-        value: z.string().optional(),
+        value: z
+          .string()
+          .optional()
+          .describe(
+            "Text for fill, a URL for navigate, or a direction (up/down/top/bottom) for scroll.",
+          ),
       },
     },
     async ({ ref, action, value }) => {
@@ -62,6 +67,7 @@ export function createMcpServer(bridge: Bridge): McpServer {
       const changes = [
         res.diff.appeared.length > 0 ? `appeared: ${res.diff.appeared.join(", ")}` : "",
         res.diff.removed.length > 0 ? `removed: ${res.diff.removed.join(", ")}` : "",
+        res.diff.changed.length > 0 ? `changed: ${res.diff.changed.join(", ")}` : "",
       ]
         .filter(Boolean)
         .join("; ");

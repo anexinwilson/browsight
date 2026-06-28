@@ -48,7 +48,7 @@ browsight addresses all three with one universal mechanism: the user's own authe
 
 ## 4. Client compatibility
 
-browsight is a standard MCP server over the stdio transport, so any MCP-compatible client can use it — Claude Code, Cursor, Windsurf, VS Code, Google Antigravity, etc. The server and extension are identical across clients; only the one-time registration step differs.
+browsight is a standard MCP server over the stdio transport, so any MCP-compatible client can use it — Claude Code, Cursor, Windsurf, VS Code, Antigravity, etc. The server and extension are identical across clients; only the one-time registration step differs.
 
 ---
 
@@ -162,7 +162,7 @@ Token reductions are real but vary by page type and are not claimed to be unifor
 | Lint / format | Biome | — |
 | Tests | `node --test` | — |
 
-**Hand-rolled (no suitable library):** the snapshot walker, the self-healing reference scorer, the page-settled detector (MutationObserver quiet-window + `readyState` + in-flight request counter + hard timeout), the framework-safe fill (native value setter + `_valueTracker` reset + input/change events), and the structured (ref-keyed set) diff.
+**Hand-rolled (no suitable library):** the snapshot walker, the self-healing reference scorer, the page-settled detector (MutationObserver quiet-window + hard timeout today; `readyState` + an in-flight request counter are planned), the framework-safe fill (native value setter + `_valueTracker` reset + input/change events), and the structured (ref-keyed set) diff.
 
 **Deliberately avoided:** `jsdom` (Node-only; perceive in-page), `aria-query` (`dom-accessibility-api` resolves roles too), `axe-core` (audit engine, wrong shape, MPL-2.0), `@postlight/parser` / `html-to-text` (Node-only / redundant), `@testing-library/dom` (throws on ambiguity), Playwright/Puppeteer (cannot run in an extension).
 
@@ -281,7 +281,7 @@ Work beyond these phases — DevOps, security scanning, distribution, and advanc
 - **Extraction quality varies.** Content pages compress well; application pages remain clean but app-shaped and cost more tokens. Token reductions are not claimed to be uniform.
 - **DOM volatility.** Sites with hashed, build-specific class names and frequent UI changes require references to anchor on stable attributes (role, accessible name, `data-*`) and degrade gracefully.
 - **Prompt injection cannot be fully prevented.** The permission layer provides blast-radius containment, not prevention.
-- **Coverage edges.** Closed shadow roots and cross-origin iframes are not fully reachable from an extension; these are surfaced as explicit sentinels, never silent gaps.
+- **Coverage edges.** Shadow DOM and iframes aren't traversed yet; descent into open shadow roots / same-origin iframes, and a `frame_unreachable` sentinel for what stays unreachable, are planned (see ROADMAP).
 - **Synthetic input.** Content-script events are `isTrusted:false`; the common click/fill path works because real framework handlers do not check the flag, and the rare exceptions fall in the dangerous class already routed to confirmation.
 - **Service-worker lifecycle.** MV3 workers are evicted when idle, so the bridge reconnects on wake.
 - **Not a web-search replacement.** For open, unauthenticated content, a client's native web search is the better tool.

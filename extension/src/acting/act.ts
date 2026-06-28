@@ -33,8 +33,47 @@ function fillValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): v
 
 const EMPTY_DIFF: Diff = { appeared: [], removed: [], changed: [] };
 
+// `scroll` directions that page the whole viewport rather than centring a specific element.
+const SCROLL_DIRECTIONS = new Set(["up", "down", "top", "bottom"]);
+
+/** Scroll the viewport itself — used to reach lazily-loaded content (comments, infinite feeds) that
+ *  no current reference points at yet. */
+function scrollViewport(direction: string): void {
+  if (direction === "bottom") {
+    window.scrollTo({ top: document.documentElement.scrollHeight });
+  } else if (direction === "top") {
+    window.scrollTo({ top: 0 });
+  } else {
+    window.scrollBy({ top: direction === "up" ? -window.innerHeight : window.innerHeight });
+  }
+}
+
+/** Settle, snapshot the result, remember it for the next act, and report verdict + diff + refs. */
+async function settleAndReport(
+  action: Action,
+  before: { readonly markdown: string; readonly refs: Ref[] },
+  valueSet: boolean,
+): Promise<ActResult> {
+  await settle();
+  const after = buildSnapshot(document);
+  rememberSnapshot(after.refs, after.elements);
+  return {
+    verdict: selectVerdict(action, before.markdown, after.markdown, valueSet),
+    diff: computeDiff(before.refs, after.refs),
+    refs: after.refs,
+  };
+}
+
 /** Resolve `ref`, perform `action`, settle, and report the verdict + diff + fresh references. */
 export async function performAct(ref: string, action: Action, value?: string): Promise<ActResult> {
+  // Viewport scroll: `scroll` with a direction value (up/down/top/bottom) instead of a ref pages the
+  // window so lazily-loaded content — comments, infinite feeds — enters the DOM for the next read.
+  if (action === "scroll" && value && SCROLL_DIRECTIONS.has(value)) {
+    const before = buildSnapshot(document);
+    scrollViewport(value);
+    return settleAndReport(action, before, false);
+  }
+
   const resolution = resolveRef(ref);
   if ("sentinel" in resolution) {
     const snap = buildSnapshot(document);
@@ -79,13 +118,5 @@ export async function performAct(ref: string, action: Action, value?: string): P
       break;
   }
 
-  await settle();
-  const after = buildSnapshot(document);
-  rememberSnapshot(after.refs, after.elements);
-
-  return {
-    verdict: selectVerdict(action, before.markdown, after.markdown, valueSet),
-    diff: computeDiff(before.refs, after.refs),
-    refs: after.refs,
-  };
+  return settleAndReport(action, before, valueSet);
 }

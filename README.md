@@ -4,7 +4,7 @@
 
 `MIT` · `TypeScript (strict)` · `Node 24` · `Manifest V3`
 
-browsight lets an AI agent (Claude Code, Antigravity, Cursor, …) read and act on any site you are **already signed into**, using your **real Chrome session**, through two small, deterministic, permissioned tools. One representation works on every page — there is no per-site code.
+browsight lets an AI agent (Claude Code, Cursor, Antigravity, …) read and act on any site you are **already signed into**, using your **real Chrome session**, through two small, deterministic, permissioned tools. One representation works on every page — there is no per-site code.
 
 It is three pieces: a **Manifest V3 Chrome extension** (the only part that touches the page), a **local MCP server** (what the agent talks to), and a **token-authenticated loopback WebSocket** between them.
 
@@ -25,7 +25,7 @@ It complements your agent's built-in web search (it targets the authenticated, i
 ## How it works
 
 ```
-AI agent (Claude Code / Antigravity)
+AI agent (Claude Code, Antigravity)
    │  MCP over stdio
    ▼
 browsight server (Node)            ← the two tools; secret-stripping; diffing
@@ -66,7 +66,7 @@ The agent reads that, then acts by reference — `click #5`, `fill #6 with …`.
 - **Typed results** — every action returns a verdict (`navigated` / `dom_changed` / `value_set` / `no_change`) plus a diff of what changed.
 - **Capability-based permissions** — deny-by-default whitelist with read-only / full-control tiers and an optional timer, backed by Chrome's own host-permission system; policy lives in the extension, outside the model's reach.
 - **One-command setup** — `npm run setup` wires both sides (zero token copy-paste); `npm run doctor` checks the connection.
-- **Any MCP client** — Claude Code, Antigravity, Cursor, Windsurf, … (only the one-time registration differs).
+- **Any MCP client** — Claude Code, Cursor, Windsurf, Antigravity, … (only the one-time registration differs).
 
 ## Tech stack
 
@@ -100,7 +100,7 @@ You do not use the extension directly — you talk to your agent. Ask in plain E
 
 > "read this page" · "summarize my GitHub notifications" · "click the Sort button" · "fill the search box with bookmarking"
 
-The agent calls `browser_read` / `browser_act` behind the scenes. Run `npm run doctor` to check the connection. Setup for **Google Antigravity** is in [antigravity/](antigravity/README.md).
+The agent calls `browser_read` / `browser_act` behind the scenes. Run `npm run doctor` to check the connection.
 
 ## Security model
 
@@ -114,8 +114,7 @@ browsight/
 ├─ server/       MCP server, bridge, post-processing, tests
 ├─ shared/       protocol.ts — one zod-validated contract
 ├─ scripts/      setup.ts — one-command bootstrap + doctor
-├─ antigravity/  setup guide for Google Antigravity
-└─ docs/         DESIGN.md — architecture, conventions, ADRs
+└─ docs/         DESIGN.md, PRD.md — technical design + product spec
 ```
 
 ## Development
@@ -127,17 +126,17 @@ npm run lint       # Biome
 npm run build
 ```
 
-Product spec: [PRD.md](PRD.md). Technical design + decision records: [docs/DESIGN.md](docs/DESIGN.md). Deferred work: [ROADMAP.md](ROADMAP.md).
+Product spec: [PRD.md](docs/PRD.md). Technical design + decision records: [docs/DESIGN.md](docs/DESIGN.md). Deferred work: [ROADMAP.md](docs/ROADMAP.md).
 
 ## Roadmap (high level)
 
-The full permission layer (per-action confirmation, provenance tripwire, audit log), advanced reads (schema extraction, virtualization-aware reads), the DevOps + security CI pass, and npm / store distribution. See [ROADMAP.md](ROADMAP.md).
+The full permission layer (per-action confirmation, provenance tripwire, audit log), advanced reads (schema extraction, virtualization-aware reads), the DevOps + security CI pass, and npm / store distribution. See [ROADMAP.md](docs/ROADMAP.md).
 
 ## Honest caveats
 
 - Token reductions vary by page; application-shaped pages cost more than content pages.
 - Synthetic input is `isTrusted:false`; a few hardened controls need more (deferred).
-- Closed shadow roots and cross-origin iframes are surfaced as explicit sentinels, not silently read.
+- Content inside shadow DOM and iframes isn't read yet — descent into open shadow roots / same-origin iframes and a `frame_unreachable` sentinel for the rest are planned (see [ROADMAP.md](docs/ROADMAP.md)).
 - This is an **MVP** — read + act + a whitelist gate. The richer controls are on the roadmap.
 
 ## License

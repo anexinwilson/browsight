@@ -1,6 +1,8 @@
 # browsight — Technical Design
 
-> How browsight is built. Companion to the product spec in [PRD.md](../PRD.md), which covers what and why. This document covers the architecture, data formats, key algorithms, the concrete build decisions, and the decision records.
+> How browsight is built. Companion to the product spec in [PRD.md](PRD.md), which covers what and why. This document covers the architecture, data formats, key algorithms, the concrete build decisions, and the decision records.
+
+> **Implementation status.** This document describes browsight's intended design. The MVP implements the core read-and-act loop, the whitelist permission gate, the semantic-snapshot walk, reference re-resolution, and the structural diff. The following are *specified here but not yet implemented* (tracked in [ROADMAP.md](ROADMAP.md)): open-shadow-DOM / same-origin-iframe descent and the `frame_unreachable` frame sentinel; the `readyState` + in-flight-request settle signals (the MutationObserver quiet-window + hard timeout do exist); weighted multi-attribute reference scoring (current matching is role + name exact); `chrome.alarms`-scheduled grant expiry (expiry is enforced lazily in `decideAccess`); and the headless-Chrome smoke tests. Where a section below diverges from today's code, this note governs.
 
 ---
 
@@ -72,7 +74,7 @@ Framing is JSON over the WebSocket. `maxPayload` on the `ws` server is set high 
 
 Built entirely in the content script against the live DOM. No content-script API exposes Chrome's computed accessibility tree, so browsight reconstructs the semantics.
 
-**The walk.** Traverse the DOM (descending open shadow roots and same-origin iframes), keeping nodes that are interactive or meaningful: `button`, `a[href]`, form controls, `[role]`, `[tabindex]`, `contenteditable`, elements with click handlers, plus headings, list items, and text blocks for readable content.
+**The walk.** Traverse the DOM (descent into open shadow roots and same-origin iframes is planned — see the status note; today the walk covers the main document), keeping nodes that are interactive or meaningful: `button`, `a[href]`, form controls, `[role]`, `[tabindex]`, `contenteditable`, elements with click handlers, plus headings, list items, and text blocks for readable content.
 
 **Per node.** Resolve role with `getRole(el)` and accessible name with `computeAccessibleName(el)` (both from `dom-accessibility-api`). Attach DOM-only facts the a11y layer lacks: bounding box, in-viewport flag, visibility, and the nearest stable-attribute ancestor.
 
