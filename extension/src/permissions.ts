@@ -24,13 +24,17 @@ export async function saveGrants(grants: Grant[]): Promise<void> {
  * Returns false (and saves nothing) if the user declines the browser prompt.
  */
 export async function grantSite(grant: Grant): Promise<boolean> {
+  // Persist the grant BEFORE requesting the host permission. Chrome's permission prompt closes the
+  // popup and destroys this script context, so a save *after* the await is lost on the first click
+  // (the grant only "took" on a second click, when the permission was already held and no prompt
+  // appeared). Saving first means the grant survives the popup closing; roll back only on a decline.
+  const others = (await listGrants()).filter((g) => g.origin !== grant.origin);
+  await saveGrants([...others, grant]);
   const granted = await chrome.permissions.request({ origins: [`${grant.origin}/*`] });
   if (!granted) {
+    await saveGrants(others);
     return false;
   }
-  const grants = (await listGrants()).filter((g) => g.origin !== grant.origin);
-  grants.push(grant);
-  await saveGrants(grants);
   return true;
 }
 
