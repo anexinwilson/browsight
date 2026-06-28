@@ -52,10 +52,19 @@ export function safeRole(el: Element): string {
   }
 }
 
-/** The element's accessible name, whitespace-normalized. */
+/** Strip leaked HTML tags and normalize whitespace. Accessible names/labels must be plain text —
+ *  some sites put markup in alt/aria-label, which would otherwise surface as `<img …>` in a name. */
+function stripMarkup(value: string): string {
+  return value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The element's accessible name, plain-text and whitespace-normalized. */
 export function safeName(el: Element): string {
   try {
-    return computeAccessibleName(el).replace(/\s+/g, " ").trim();
+    return stripMarkup(computeAccessibleName(el));
   } catch {
     return "";
   }
@@ -107,9 +116,9 @@ export function fallbackName(el: Element): string {
   const attr =
     el.getAttribute("placeholder") ?? el.getAttribute("title") ?? el.getAttribute("aria-label");
   if (attr) {
-    return attr.replace(/\s+/g, " ").trim();
+    return stripMarkup(attr);
   }
-  return (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+  return stripMarkup(el.textContent ?? "").slice(0, 60);
 }
 
 // Natively-interactive elements. Deliberately NOT bare `[role]` / `[tabindex]`: those match
