@@ -147,9 +147,10 @@ async function handleAct(msg: ActRequest): Promise<void> {
     sendActSentinel(msg.id, "frame_unreachable", "no active tab to act on");
     return;
   }
+  const grants = await listGrants();
+  const now = Date.now();
   const origin = originOf(tab.url);
-  const access = decideAccess(await listGrants(), origin, Date.now());
-  if (!access.act) {
+  if (!decideAccess(grants, origin, now).act) {
     sendActSentinel(
       msg.id,
       "not_whitelisted",
@@ -161,6 +162,17 @@ async function handleAct(msg: ActRequest): Promise<void> {
   if (msg.action === "navigate") {
     if (!msg.value) {
       sendActSentinel(msg.id, "not_actionable", "navigate needs a url value");
+      return;
+    }
+    // Gate the destination too: a grant on one site must not let the agent send the tab to an
+    // arbitrary, un-whitelisted origin (e.g. a destructive GET endpoint or a hostile page).
+    const target = originOf(msg.value);
+    if (!decideAccess(grants, target, now).read) {
+      sendActSentinel(
+        msg.id,
+        "not_whitelisted",
+        `${target} is not whitelisted — allow it in the browsight popup before navigating there.`,
+      );
       return;
     }
     await chrome.tabs.update(tab.id, { url: msg.value });
