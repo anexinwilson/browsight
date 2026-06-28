@@ -165,13 +165,15 @@ async function handleAct(msg: ActRequest): Promise<void> {
       return;
     }
     // Gate the destination too: a grant on one site must not let the agent send the tab to an
-    // arbitrary, un-whitelisted origin (e.g. a destructive GET endpoint or a hostile page).
+    // arbitrary origin. A navigation replaces the page via a top-level GET — that is an action, so
+    // the destination needs full-control consent (.act), not merely read, or a read-only grant
+    // could be driven to side-effecting URLs (/logout, ?action=delete) the user never consented to.
     const target = originOf(msg.value);
-    if (!decideAccess(grants, target, now).read) {
+    if (!decideAccess(grants, target, now).act) {
       sendActSentinel(
         msg.id,
         "not_whitelisted",
-        `${target} is not whitelisted — allow it in the browsight popup before navigating there.`,
+        `${target} is not set to "Full control" — navigating there is an action and needs full-control access in the browsight popup.`,
       );
       return;
     }
