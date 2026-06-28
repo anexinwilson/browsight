@@ -98,6 +98,20 @@ export function elementState(el: Element): string {
   return parts.join(" ");
 }
 
+/**
+ * A best-effort label when the accessible name is empty, so a control is never an unidentifiable
+ * `[combobox "" #n]`. Falls back to placeholder/title/aria-label, then a short slice of text
+ * content. Never reads `value` (a user's typed text/secret must not become a reference label).
+ */
+export function fallbackName(el: Element): string {
+  const attr =
+    el.getAttribute("placeholder") ?? el.getAttribute("title") ?? el.getAttribute("aria-label");
+  if (attr) {
+    return attr.replace(/\s+/g, " ").trim();
+  }
+  return (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+}
+
 // Natively-interactive elements. Deliberately NOT bare `[role]` / `[tabindex]`: those match
 // landmark/container elements (role="main", tabindex="-1") whose subtree must be walked, not skipped.
 const NATIVE_INTERACTIVE =

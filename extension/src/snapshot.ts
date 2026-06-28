@@ -6,6 +6,7 @@
 import type { Ref } from "@browsight/shared";
 import {
   elementState,
+  fallbackName,
   isHidden,
   isInteractive,
   makeRecipe,
@@ -81,7 +82,11 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
     if (isInteractive(el)) {
       flush();
       const role = safeRole(el) || tag;
-      const name = safeName(el);
+      // Display name falls back to placeholder/title/text when the accessible name is empty, but the
+      // recipe keeps the *raw* accessible name so act-time re-resolution (which compares safeName)
+      // still matches.
+      const rawName = safeName(el);
+      const name = rawName || fallbackName(el);
       const ordinal = roleCounts.get(role) ?? 0;
       roleCounts.set(role, ordinal + 1);
       const id = nextId++;
@@ -90,7 +95,7 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
         id,
         role,
         name,
-        recipe: makeRecipe(el, role, name, ordinal),
+        recipe: makeRecipe(el, role, rawName, ordinal),
         ...(state ? { state } : {}),
       });
       elements.set(id, el);
