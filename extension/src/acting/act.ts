@@ -31,6 +31,38 @@ function fillValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): v
   }
 }
 
+/** Select an <option> by its value, label, or visible text. */
+function fillSelect(el: HTMLSelectElement, value: string): boolean {
+  const match = Array.from(el.options).find(
+    (o) => o.value === value || o.label === value || o.text.trim() === value,
+  );
+  if (!match) {
+    return false;
+  }
+  el.value = match.value;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  return el.value === match.value;
+}
+
+/** Replace the text of a contenteditable host, dispatching the input events editors listen for. */
+function fillEditable(el: HTMLElement, value: string): boolean {
+  el.focus();
+  el.dispatchEvent(
+    new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      inputType: "insertText",
+      data: value,
+    }),
+  );
+  el.textContent = value;
+  el.dispatchEvent(
+    new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }),
+  );
+  return (el.textContent ?? "") === value;
+}
+
 const EMPTY_DIFF: Diff = { appeared: [], removed: [], changed: [] };
 
 // `scroll` directions that page the whole viewport rather than centring a specific element.
@@ -102,15 +134,32 @@ export async function performAct(ref: string, action: Action, value?: string): P
         );
       }
       break;
-    case "fill":
-      if (
-        (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) &&
-        value !== undefined
-      ) {
+    case "fill": {
+      if (value === undefined) {
+        break;
+      }
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
         fillValue(el, value);
         valueSet = el.value === value;
+      } else if (el instanceof HTMLSelectElement) {
+        valueSet = fillSelect(el, value);
+      } else if (el instanceof HTMLElement && el.isContentEditable) {
+        valueSet = fillEditable(el, value);
+      } else {
+        // Not a fillable control — say so explicitly instead of silently reporting no_change.
+        rememberSnapshot(before.refs, before.elements);
+        return {
+          verdict: "no_change",
+          diff: EMPTY_DIFF,
+          refs: before.refs,
+          sentinel: {
+            kind: "not_actionable",
+            hint: "that element can't be filled — re-read and use a text field, dropdown, or editor",
+          },
+        };
       }
       break;
+    }
     case "scroll":
       el.scrollIntoView({ block: "center" });
       break;

@@ -37,7 +37,7 @@ const BLOCK_TAGS = new Set([
 export function buildSnapshot(doc: Document = document): SnapshotResult {
   const refs: Ref[] = [];
   const out: string[] = [];
-  const roleCounts = new Map<string, number>();
+  const ordinals = new Map<string, number>();
   let line = "";
   let nextId = 1;
   let hasPasswordField = false;
@@ -83,8 +83,11 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
       // still matches.
       const rawName = safeName(el);
       const name = rawName || fallbackName(el);
-      const ordinal = roleCounts.get(role) ?? 0;
-      roleCounts.set(role, ordinal + 1);
+      // Count position within the role+name group so the act-time resolver can pick the right one
+      // among identically-named controls.
+      const ordinalKey = `${role}\n${rawName}`;
+      const ordinal = ordinals.get(ordinalKey) ?? 0;
+      ordinals.set(ordinalKey, ordinal + 1);
       const id = nextId++;
       const state = elementState(el);
       refs.push({
