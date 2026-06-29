@@ -50,7 +50,13 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
   }
 
   function flush(): void {
-    const text = line.replace(/\s+/g, " ").trim();
+    // Collapse animated odometer counters (e.g. YouTube view counts) that dump every digit of every
+    // column as "1 2 3 4 5 6 7 8 9 0 ..." — a long run of single spaced digits is never real content.
+    const text = line
+      .replace(/\s+/g, " ")
+      .replace(/(?:\b\d\b ){7,}\b\d\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (text) {
       out.push(text);
       lastRefName = "";
@@ -69,6 +75,11 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
     const el = node as Element;
     const tag = el.tagName.toLowerCase();
     if (SKIP_TAGS.has(tag) || isHidden(el)) {
+      return;
+    }
+    // Footer / contentinfo landmarks are copyright and site-map boilerplate that rarely matter for a
+    // task and dominate the token cost on dense pages — skip the subtree.
+    if (tag === "footer" || el.getAttribute("role") === "contentinfo") {
       return;
     }
     if (el instanceof HTMLInputElement && el.type === "password") {

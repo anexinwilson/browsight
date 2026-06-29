@@ -30,13 +30,17 @@ function statesByKey(refs: readonly Ref[]): Map<string, string[]> {
 export function computeDiff(before: readonly Ref[], after: readonly Ref[]): Diff {
   const beforeStates = statesByKey(before);
   const afterStates = statesByKey(after);
-  const appeared = [...afterStates.keys()].filter((k) => !beforeStates.has(k));
-  const removed = [...beforeStates.keys()].filter((k) => !afterStates.has(k));
+  const appeared: string[] = [];
+  const removed: string[] = [];
   const changed: string[] = [];
-  for (const [key, aList] of afterStates) {
-    const bList = beforeStates.get(key);
-    if (!bList) {
-      continue;
+  for (const key of new Set([...beforeStates.keys(), ...afterStates.keys()])) {
+    const bList = beforeStates.get(key) ?? [];
+    const aList = afterStates.get(key) ?? [];
+    const delta = aList.length - bList.length;
+    if (delta > 0) {
+      appeared.push(delta > 1 ? `${key} (x${delta})` : key);
+    } else if (delta < 0) {
+      removed.push(-delta > 1 ? `${key} (x${-delta})` : key);
     }
     const n = Math.min(bList.length, aList.length);
     for (let i = 0; i < n; i++) {

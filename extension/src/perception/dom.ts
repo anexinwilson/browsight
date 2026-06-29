@@ -34,6 +34,11 @@ export function isHidden(el: Element): boolean {
   if (el.hasAttribute("hidden")) {
     return true;
   }
+  // Content marked aria-hidden or inert (the standard modal-backdrop pattern) is hidden from the
+  // accessibility tree — skip it and its subtree so the agent never acts on something behind a dialog.
+  if (el.getAttribute("aria-hidden") === "true" || (el as HTMLElement).inert) {
+    return true;
+  }
   const view = el.ownerDocument.defaultView;
   const style = view?.getComputedStyle(el);
   if (style && (style.display === "none" || style.visibility === "hidden")) {

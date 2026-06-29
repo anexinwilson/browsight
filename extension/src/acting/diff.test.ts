@@ -20,6 +20,14 @@ test("computeDiff reports appeared and removed interactive elements", () => {
   assert.deepEqual(d.changed, []);
 });
 
+test("computeDiff counts duplicate same-name controls", () => {
+  const before = [ref(1, "link", "Reply")];
+  const after = [ref(1, "link", "Reply"), ref(2, "link", "Reply"), ref(3, "link", "Reply")];
+  const d = computeDiff(before, after);
+  assert.deepEqual(d.appeared, ['link "Reply" (x2)']);
+  assert.deepEqual(d.removed, []);
+});
+
 test("computeDiff reports a state change on a persistent element", () => {
   const before = [ref(1, "button", "Menu", "aria-expanded=false")];
   const after = [ref(1, "button", "Menu", "aria-expanded=true")];
