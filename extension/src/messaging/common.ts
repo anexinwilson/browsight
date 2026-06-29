@@ -40,9 +40,7 @@ export async function currentTab(): Promise<chrome.tabs.Tab | undefined> {
   const id = data[CURRENT_TAB_KEY] as number | undefined;
   if (typeof id === "number") {
     const tab = await chrome.tabs.get(id).catch(() => undefined);
-    if (tab) {
-      return tab;
-    }
+    return tab ?? focusedTab();
   }
   return focusedTab();
 }

@@ -11,6 +11,7 @@ import { handleTabs } from "./messaging/tabs.ts";
 interface Connection {
   readonly port: number;
   readonly token: string;
+  readonly host: string;
 }
 
 let socket: WebSocket | null = null;
@@ -24,7 +25,11 @@ async function loadConnection(): Promise<Connection | null> {
     const res = await fetch(chrome.runtime.getURL("connection.json"));
     const data = (await res.json()) as Partial<Connection>;
     if (typeof data.port === "number" && typeof data.token === "string") {
-      return { port: data.port, token: data.token };
+      return {
+        port: data.port,
+        token: data.token,
+        host: typeof data.host === "string" ? data.host : "127.0.0.1",
+      };
     }
   } catch {
     // Not set up yet — `npm run setup` writes connection.json.
@@ -40,7 +45,10 @@ async function connect(): Promise<void> {
   if (!conn) {
     return;
   }
-  const ws = new WebSocket(`ws://127.0.0.1:${conn.port}`);
+  if (!["127.0.0.1", "localhost"].includes(conn.host)) {
+    return;
+  }
+  const ws = new WebSocket(`ws://${conn.host}:${conn.port}`);
   socket = ws;
   ws.addEventListener("open", () => {
     ws.send(
@@ -51,7 +59,11 @@ async function connect(): Promise<void> {
       }),
     );
   });
+  // deepcode ignore Insufficient postMessage Validation: this is a WebSocket, not window.postMessage
   ws.addEventListener("message", (ev) => {
+    if (ev.origin !== `ws://${conn.host}:${conn.port}`) {
+      return;
+    }
     void route(String(ev.data));
   });
   ws.addEventListener("close", () => {

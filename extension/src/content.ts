@@ -29,13 +29,11 @@ interface ContentMessage {
 }
 
 declare global {
-  interface Window {
-    __browsightInjected?: boolean;
-  }
+  var __browsightInjected: boolean | undefined;
 }
 
-if (!window.__browsightInjected) {
-  window.__browsightInjected = true;
+if (!globalThis.__browsightInjected) {
+  globalThis.__browsightInjected = true;
 
   chrome.runtime.onMessage.addListener(
     (

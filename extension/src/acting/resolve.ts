@@ -22,9 +22,7 @@ interface RefState {
  */
 function refState(): RefState {
   const g = globalThis as typeof globalThis & { __browsightRefs?: RefState };
-  if (!g.__browsightRefs) {
-    g.__browsightRefs = { refs: [], elements: new Map() };
-  }
+  g.__browsightRefs ??= { refs: [], elements: new Map() };
   return g.__browsightRefs;
 }
 

@@ -17,7 +17,7 @@ export async function handleTabs(send: Send, msg: TabsRequest): Promise<void> {
   const active = await currentTab();
   const infos: TabInfo[] = [];
   for (const t of all) {
-    if (typeof t.id !== "number" || !t.url || !/^https?:/.test(t.url)) {
+    if (typeof t.id !== "number" || !t.url || !/^https?:\/\//.test(t.url)) {
       continue;
     }
     const origin = originOf(t.url);

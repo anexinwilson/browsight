@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <title>Browsight Popup</title>
     <style>
       body { font: 13px system-ui, sans-serif; width: 300px; margin: 0; padding: 12px; }
       h1 { font-size: 13px; margin: 0 0 8px; }
@@ -9,7 +10,7 @@
       .row { display: flex; gap: 6px; margin-bottom: 12px; }
       button { font: inherit; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
       button.sel { background: #e6f1fb; border-color: #85b7eb; }
-      label { color: #777; display: block; margin-bottom: 4px; }
+      label, .fake-label { color: #777; display: block; margin-bottom: 4px; }
       select { font: inherit; width: 100%; padding: 6px; }
       .grant { width: 100%; padding: 8px; margin-top: 10px; background: #e6f1fb; border-color: #85b7eb; font-weight: 600; }
       ul { list-style: none; margin: 12px 0 0; padding: 12px 0 0; border-top: 1px solid #eee; }
@@ -22,13 +23,13 @@
   <body>
     <h1>browsight</h1>
     <div class="origin" id="origin">—</div>
-    <label>Access</label>
-    <div class="row" id="tier">
+    <div class="fake-label" id="access-lbl">Access</div>
+    <div class="row" id="tier" aria-labelledby="access-lbl">
       <button data-tier="read" style="flex: 1">Read only</button>
       <button data-tier="full" class="sel" style="flex: 1">Full control</button>
     </div>
-    <label>Allow for</label>
-    <select id="timer"></select>
+    <label for="timer">Allow for</label>
+    <select id="timer" aria-label="Expiration Timer"></select>
     <button class="grant" id="grant">Grant access</button>
     <div class="muted" style="margin-top: 14px">Allowed sites</div>
     <ul id="list"></ul>

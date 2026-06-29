@@ -28,12 +28,12 @@
       <tbody id="rows"></tbody>
     </table>
     <div class="add">
-      <input id="origin" placeholder="https://example.com" />
-      <select id="tier">
+      <input id="origin" placeholder="https://example.com" aria-label="Origin URL" />
+      <select id="tier" aria-label="Access Tier">
         <option value="read">Read only</option>
         <option value="full">Full control</option>
       </select>
-      <select id="timer"></select>
+      <select id="timer" aria-label="Expiration Timer"></select>
       <button id="add">Add site</button>
     </div>
     <div id="status"></div>

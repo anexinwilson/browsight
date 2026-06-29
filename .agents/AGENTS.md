@@ -8,3 +8,9 @@ To maintain a clean repository, NEVER place temporary, throwaway, or junk files 
 When implementing CI/CD and security pipelines for portfolio projects:
 1. **Security Tooling:** Implement **CodeQL** for deep custom-code static analysis (SAST) AND **Snyk** for dependency/SCA scanning. This dual approach proves mastery of both GitHub-native AppSec and industry-standard developer-first security.
 2. **NPM Publishing:** Always use **NPM Provenance** via **Trusted Publishers (OIDC)** in GitHub Actions. Never use long-lived NPM tokens as secrets. This demonstrates cutting-edge supply chain security knowledge.
+
+# Secure Messaging Mandate (Snyk SAST Compliance)
+Whenever implementing `window.postMessage`, `chrome.runtime.onMessageExternal`, or `WebSocket` message listeners:
+1. **Always validate the origin**: You MUST check `event.origin` against an explicit allowlist or trusted URL before processing `event.data`. Do not use `.includes()` or `.startsWith()` as they are vulnerable to spoofing. Use strict equality `===`.
+2. **Fail closed**: If the origin does not match the expected trusted source, the event handler must immediately `return` or throw.
+3. This guarantees compliance with SAST engines (like Snyk) that flag "Insufficient postMessage Validation".

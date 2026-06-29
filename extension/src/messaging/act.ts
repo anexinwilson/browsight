@@ -5,7 +5,7 @@
  * reported as a clean `navigated` verdict rather than a raw channel-closed error.
  */
 import type { ActRequest, Diff, Ref, Sentinel, SentinelKind, Verdict } from "@browsight/shared";
-import { decideAccess } from "../permissions/policy.ts";
+import { type Grant, decideAccess } from "../permissions/policy.ts";
 import { listGrants } from "../permissions/storage.ts";
 import { type Send, currentTab, originOf } from "./common.ts";
 
@@ -14,6 +14,49 @@ interface ActContentResult {
   readonly diff: Diff;
   readonly refs: Ref[];
   readonly sentinel?: Sentinel;
+}
+
+async function handleNavigate(
+  send: Send,
+  id: string,
+  value: string | undefined,
+  tabId: number,
+  grants: Grant[],
+  now: number,
+): Promise<void> {
+  if (value === "reload" || value === "refresh") {
+    await chrome.tabs.reload(tabId);
+    send({
+      type: "act.response",
+      id,
+      verdict: "navigated",
+      diff: { appeared: [], removed: [], changed: [] },
+      refs: [],
+    });
+    return;
+  }
+  if (!value) {
+    sendActSentinel(send, id, "not_actionable", "navigate needs a url value (or 'reload')");
+    return;
+  }
+  const target = originOf(value);
+  if (!decideAccess(grants, target, now).act) {
+    sendActSentinel(
+      send,
+      id,
+      "not_whitelisted",
+      `${target} is not set to "Full control" — navigating there is an action and needs full-control access in the browsight popup.`,
+    );
+    return;
+  }
+  await chrome.tabs.update(tabId, { url: value });
+  send({
+    type: "act.response",
+    id,
+    verdict: "navigated",
+    diff: { appeared: [], removed: [], changed: [] },
+    refs: [],
+  });
 }
 
 export async function handleAct(send: Send, msg: ActRequest): Promise<void> {
@@ -36,47 +79,7 @@ export async function handleAct(send: Send, msg: ActRequest): Promise<void> {
   }
 
   if (msg.action === "navigate") {
-    // `navigate` with value "reload" refreshes the current page in place. A reload stays on the same
-    // origin, which the full-control check above already covered — so no destination gate is needed.
-    // Useful when a page is stuck mid-render or a lazy region won't settle.
-    if (msg.value === "reload" || msg.value === "refresh") {
-      await chrome.tabs.reload(tab.id);
-      send({
-        type: "act.response",
-        id: msg.id,
-        verdict: "navigated",
-        diff: { appeared: [], removed: [], changed: [] },
-        refs: [],
-      });
-      return;
-    }
-    if (!msg.value) {
-      sendActSentinel(send, msg.id, "not_actionable", "navigate needs a url value (or 'reload')");
-      return;
-    }
-    // Gate the destination too: a grant on one site must not let the agent send the tab to an
-    // arbitrary origin. A navigation replaces the page via a top-level GET — that is an action, so
-    // the destination needs full-control consent (.act), not merely read, or a read-only grant
-    // could be driven to side-effecting URLs (/logout, ?action=delete) the user never consented to.
-    const target = originOf(msg.value);
-    if (!decideAccess(grants, target, now).act) {
-      sendActSentinel(
-        send,
-        msg.id,
-        "not_whitelisted",
-        `${target} is not set to "Full control" — navigating there is an action and needs full-control access in the browsight popup.`,
-      );
-      return;
-    }
-    await chrome.tabs.update(tab.id, { url: msg.value });
-    send({
-      type: "act.response",
-      id: msg.id,
-      verdict: "navigated",
-      diff: { appeared: [], removed: [], changed: [] },
-      refs: [],
-    });
-    return;
+    return handleNavigate(send, msg.id, msg.value, tab.id, grants, now);
   }
 
   try {

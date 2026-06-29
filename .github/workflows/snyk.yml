@@ -9,28 +9,44 @@ on:
 jobs:
   security:
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Run Snyk to check for vulnerabilities
-        uses: snyk/actions/node@master
+      - name: Run Snyk SCA (dependency scan)
+        uses: snyk/actions/node@v2
+        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           command: test
-          args: --all-projects
+          args: --all-projects --sarif-file-output=snyk-sca.sarif
+
+      - name: Upload SCA results to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-sca.sarif
 
       - name: Run Snyk Code (SAST)
-        uses: snyk/actions/node@master
+        uses: snyk/actions/node@v2
+        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           command: code test
+          args: --sarif-file-output=snyk-sast.sarif
+
+      - name: Upload SAST results to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-sast.sarif

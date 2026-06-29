@@ -45,7 +45,7 @@ export function withBrowsightServer(
  *  Windows paths like C:\Users\... intact; fall back to a basic string only if a quote appears. */
 function tomlString(value: string): string {
   return value.includes("'")
-    ? `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+    ? `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
     : `'${value}'`;
 }
 
@@ -61,14 +61,15 @@ export function browsightCodexBlock(entry: McpEntry): string {
 export function withBrowsightCodex(existing: string, entry: McpEntry): string {
   const block = browsightCodexBlock(entry);
   const header = existing.match(/^\[mcp_servers\.browsight\][^\n]*$/m);
-  if (!header || header.index === undefined) {
+  if (header?.index === undefined) {
     const base = existing.trim();
     return base ? `${base}\n\n${block}` : block;
   }
   const after = existing.slice(header.index + header[0].length);
-  const nextTable = after.search(/^\s*\[/m);
+  const nextTable = after.search(/^[ \t]*\[/m);
   const tail = nextTable === -1 ? "" : after.slice(nextTable);
-  return `${existing.slice(0, header.index)}${block}${tail ? `\n${tail}` : ""}`;
+  const tailStr = tail ? `\n${tail}` : "";
+  return `${existing.slice(0, header.index)}${block}${tailStr}`;
 }
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -104,20 +105,29 @@ function codexConfigPath(): string {
   return join(home(), ".codex", "config.toml");
 }
 
-function pickPort(preferred: number): Promise<number> {
-  return new Promise((resolvePort) => {
-    const probe = (port: number, retry: boolean): void => {
-      const srv = createServer();
-      srv.once("error", () => (retry ? probe(0, false) : resolvePort(preferred)));
-      srv.once("listening", () => {
-        const addr = srv.address();
-        const chosen = typeof addr === "object" && addr ? addr.port : preferred;
-        srv.close(() => resolvePort(chosen));
-      });
-      srv.listen(port, "127.0.0.1");
-    };
-    probe(preferred, true);
+function tryPort(port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.once("listening", () => {
+      const addr = srv.address();
+      const chosen = typeof addr === "object" && addr ? addr.port : port;
+      srv.close(() => resolve(chosen));
+    });
+    srv.listen(port, "127.0.0.1");
   });
+}
+
+async function pickPort(preferred: number): Promise<number> {
+  try {
+    return await tryPort(preferred);
+  } catch {
+    try {
+      return await tryPort(0);
+    } catch {
+      return preferred;
+    }
+  }
 }
 
 function writeJson(path: string, data: unknown): void {
@@ -143,8 +153,10 @@ async function runSetup(): Promise<void> {
   const token = typeof existing.token === "string" ? existing.token : generateToken();
   const port = typeof existing.port === "number" ? existing.port : await pickPort(8137);
 
-  writeJson(bridgeConfigPath(), { port, token });
-  writeJson(join(EXTENSION_DIST, "connection.json"), { port, token });
+  const host = typeof existing.host === "string" ? existing.host : "127.0.0.1";
+
+  writeJson(bridgeConfigPath(), { host, port, token });
+  writeJson(join(EXTENSION_DIST, "connection.json"), { host, port, token });
   const entry = mcpServerEntry(SERVER_ENTRY);
   for (const path of clientConfigPaths()) {
     writeJson(path, withBrowsightServer(readJson(path), entry));
@@ -165,7 +177,7 @@ async function runSetup(): Promise<void> {
     "Load the extension into Chrome (one time):",
     "  1. open chrome://extensions",
     "  2. enable Developer mode (top-right)",
-    `  3. click \"Load unpacked\" and select:  ${EXTENSION_DIST}`,
+    `  3. click "Load unpacked" and select:  ${EXTENSION_DIST}`,
     "",
     "Then restart your MCP client. Check the connection any time with `npm run doctor`.",
   ].filter((l) => l !== "");
@@ -197,14 +209,17 @@ function runDoctor(): void {
   const firstBroken = checks.find(([, ok]) => !ok);
   process.stdout.write(
     firstBroken
-      ? `\nNext: fix \"${firstBroken[0]}\" — run \`npm run build\` then \`npm run setup\`.\n`
+      ? `\nNext: fix "${firstBroken[0]}" — run \`npm run build\` then \`npm run setup\`.\n`
       : "\nAll links connected. If a read still fails, whitelist the site in the browsight popup.\n",
   );
 }
 
 const isDoctor = process.argv.slice(2).includes("doctor");
-const run = isDoctor ? Promise.resolve(runDoctor()) : runSetup();
-run.catch((err: unknown) => {
-  process.stderr.write(`setup failed: ${String(err)}\n`);
-  process.exit(1);
-});
+if (isDoctor) {
+  runDoctor();
+} else {
+  runSetup().catch((err: unknown) => {
+    process.stderr.write(`setup failed: ${String(err)}\n`);
+    process.exit(1);
+  });
+}

@@ -9,7 +9,7 @@ import { computeAccessibleName, getRole } from "dom-accessibility-api";
  *  some sites put markup in alt/aria-label, which would otherwise surface as `<img …>` in a name. */
 function stripMarkup(value: string): string {
   return value
-    .replace(/<[^>]*>/g, " ")
+    .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

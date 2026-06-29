@@ -95,7 +95,7 @@ function scrollingRoot(): Element {
 function scrollViewport(direction: string): { movedPx: number } {
   const root = scrollingRoot();
   const startTop = root.scrollTop;
-  const page = root.clientHeight || window.innerHeight;
+  const page = root.clientHeight || globalThis.innerHeight;
   if (direction === "bottom") {
     root.scrollTo({ top: root.scrollHeight });
   } else if (direction === "top") {
@@ -121,7 +121,7 @@ function dispatchClick(el: Element): void {
     bubbles: true,
     cancelable: true,
     composed: true,
-    view: window,
+    view: globalThis as unknown as Window,
     button: 0,
     clientX,
     clientY,
@@ -210,23 +210,18 @@ async function loadMore(): Promise<ActResult> {
   };
 }
 
-/** Resolve `ref`, perform `action`, settle, and report the verdict + diff + fresh references. */
-export async function performAct(ref: string, action: Action, value?: string): Promise<ActResult> {
-  // `scroll: "more"` is the universal lazy-content loader: page down until something loads or the
-  // page bottoms out, in one call, rather than the caller blindly guessing directions and distances.
+async function handleViewportScroll(
+  action: Action,
+  value?: string,
+): Promise<ActResult | undefined> {
   if (action === "scroll" && value === "more") {
     return loadMore();
   }
 
-  // Viewport scroll: `scroll` with a direction value (up/down/top/bottom) instead of a ref pages the
-  // window so lazily-loaded content — comments, infinite feeds — enters the DOM for the next read.
   if (action === "scroll" && value && SCROLL_DIRECTIONS.has(value)) {
     const before = buildSnapshot(document);
     const { movedPx } = scrollViewport(value);
     const result = await settleAndReport(action, before, false);
-    // When a scroll surfaces nothing, say what actually happened: a 0px move means the page didn't
-    // scroll at all (already at the bottom, or it doesn't scroll), whereas a real move that still
-    // changed nothing means there was simply nothing more below.
     if (result.verdict === "no_change") {
       return {
         ...result,
@@ -240,6 +235,15 @@ export async function performAct(ref: string, action: Action, value?: string): P
       };
     }
     return result;
+  }
+  return undefined;
+}
+
+/** Resolve `ref`, perform `action`, settle, and report the verdict + diff + fresh references. */
+export async function performAct(ref: string, action: Action, value?: string): Promise<ActResult> {
+  const scrollResult = await handleViewportScroll(action, value);
+  if (scrollResult) {
+    return scrollResult;
   }
 
   const resolution = resolveRef(ref);
