@@ -4,6 +4,7 @@
  * `./settle.ts`; this module orchestrates them.
  */
 import type { Action, Diff, Ref, Sentinel, Verdict } from "@browsight/shared";
+import { INTERACTIVE_SELECTOR } from "../perception/dom.ts";
 import { buildSnapshot } from "../perception/snapshot.ts";
 import { computeDiff, selectVerdict } from "./diff.ts";
 import { rememberSnapshot, resolveRef } from "./resolve.ts";
@@ -68,16 +69,41 @@ const EMPTY_DIFF: Diff = { appeared: [], removed: [], changed: [] };
 // `scroll` directions that page the whole viewport rather than centring a specific element.
 const SCROLL_DIRECTIONS = new Set(["up", "down", "top", "bottom"]);
 
-/** Scroll the viewport itself — used to reach lazily-loaded content (comments, infinite feeds) that
- *  no current reference points at yet. */
-function scrollViewport(direction: string): void {
+// How many viewport pages `scroll: "more"` will try, and the pause after each for lazy content to
+// begin loading. Kept small so the whole loop finishes well inside the bridge's request timeout —
+// pages like YouTube mutate constantly, so a mutation-settle would never go quiet and would blow the
+// budget; a short fixed pause plus a cheap element count is enough to notice new content arriving.
+const LOAD_MORE_STEPS = 6;
+const LOAD_MORE_PAUSE_MS = 450;
+
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A cheap count of interactive elements — used to notice that lazy content has started loading
+ *  without paying for a full accessibility snapshot on every page step. */
+function interactiveCount(): number {
+  return document.querySelectorAll(INTERACTIVE_SELECTOR).length;
+}
+
+/** The element that scrolls the page — the document in almost every case. */
+function scrollingRoot(): Element {
+  return document.scrollingElement ?? document.documentElement;
+}
+
+/** Scroll the page itself — used to reach lazily-loaded content (comments, infinite feeds) that no
+ *  current reference points at yet. Returns how far it actually moved, so a caller can tell "nothing
+ *  more to load" from "the scroll never moved". */
+function scrollViewport(direction: string): { movedPx: number } {
+  const root = scrollingRoot();
+  const startTop = root.scrollTop;
+  const page = root.clientHeight || window.innerHeight;
   if (direction === "bottom") {
-    window.scrollTo({ top: document.documentElement.scrollHeight });
+    root.scrollTo({ top: root.scrollHeight });
   } else if (direction === "top") {
-    window.scrollTo({ top: 0 });
+    root.scrollTo({ top: 0 });
   } else {
-    window.scrollBy({ top: direction === "up" ? -window.innerHeight : window.innerHeight });
+    root.scrollBy({ top: direction === "up" ? -page : page });
   }
+  return { movedPx: Math.round(root.scrollTop - startTop) };
 }
 
 /**
@@ -134,14 +160,86 @@ async function settleAndReport(
   };
 }
 
+/**
+ * Page the document downward until new interactive content appears or the page stops moving. This is
+ * the universal "reveal what's below" primitive: one call pages incrementally and settles after each
+ * step, so lazy content (comments, infinite feeds, deferred sections) loads as it enters the viewport
+ * — instead of the caller guessing how far to jump, and instead of a single jump-to-bottom overshoot
+ * skipping past a load-trigger on tall, asymmetric layouts. Stops the moment something loads.
+ */
+async function loadMore(): Promise<ActResult> {
+  const before = buildSnapshot(document);
+  const baseline = interactiveCount();
+  // Each step: page down one viewport, pause briefly for any lazy content to begin loading, then do a
+  // cheap count check. Only when something new has appeared (or we bottom out) do we pay for a full
+  // snapshot. This keeps the whole loop fast enough to finish inside the request timeout.
+  for (let step = 0; step < LOAD_MORE_STEPS; step++) {
+    const { movedPx } = scrollViewport("down");
+    await wait(LOAD_MORE_PAUSE_MS);
+    if (interactiveCount() > baseline) {
+      await settle();
+      const after = buildSnapshot(document);
+      rememberSnapshot(after.refs, after.elements);
+      return {
+        verdict: "dom_changed",
+        diff: computeDiff(before.refs, after.refs),
+        refs: after.refs,
+      };
+    }
+    if (movedPx === 0) {
+      const after = buildSnapshot(document);
+      rememberSnapshot(after.refs, after.elements);
+      return {
+        verdict: "no_change",
+        diff: EMPTY_DIFF,
+        refs: after.refs,
+        sentinel: { kind: "not_actionable", hint: "reached the bottom — nothing more to load" },
+      };
+    }
+  }
+  const after = buildSnapshot(document);
+  rememberSnapshot(after.refs, after.elements);
+  return {
+    verdict: "no_change",
+    diff: EMPTY_DIFF,
+    refs: after.refs,
+    sentinel: {
+      kind: "not_actionable",
+      hint: `paged ${LOAD_MORE_STEPS} screens; no new content appeared (page may defer loading while the tab is in the background)`,
+    },
+  };
+}
+
 /** Resolve `ref`, perform `action`, settle, and report the verdict + diff + fresh references. */
 export async function performAct(ref: string, action: Action, value?: string): Promise<ActResult> {
+  // `scroll: "more"` is the universal lazy-content loader: page down until something loads or the
+  // page bottoms out, in one call, rather than the caller blindly guessing directions and distances.
+  if (action === "scroll" && value === "more") {
+    return loadMore();
+  }
+
   // Viewport scroll: `scroll` with a direction value (up/down/top/bottom) instead of a ref pages the
   // window so lazily-loaded content — comments, infinite feeds — enters the DOM for the next read.
   if (action === "scroll" && value && SCROLL_DIRECTIONS.has(value)) {
     const before = buildSnapshot(document);
-    scrollViewport(value);
-    return settleAndReport(action, before, false);
+    const { movedPx } = scrollViewport(value);
+    const result = await settleAndReport(action, before, false);
+    // When a scroll surfaces nothing, say what actually happened: a 0px move means the page didn't
+    // scroll at all (already at the bottom, or it doesn't scroll), whereas a real move that still
+    // changed nothing means there was simply nothing more below.
+    if (result.verdict === "no_change") {
+      return {
+        ...result,
+        sentinel: {
+          kind: "not_actionable",
+          hint:
+            movedPx === 0
+              ? "scroll did not move — the page is at the bottom or doesn't scroll"
+              : `scrolled ${movedPx}px but no new content loaded`,
+        },
+      };
+    }
+    return result;
   }
 
   const resolution = resolveRef(ref);

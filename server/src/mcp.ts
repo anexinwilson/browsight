@@ -24,7 +24,11 @@ export function createMcpServer(bridge: Bridge): McpServer {
       if (res.sentinel) {
         return { content: [{ type: "text" as const, text: `🔒 ${res.sentinel.hint}` }] };
       }
-      if (isLoginWall({ title: "", text: res.markdown, hasPasswordField: res.hasPasswordField })) {
+      // The content script prepends a freshness marker (`<!-- page-load:N -->`); strip it for the
+      // login-wall check so its extra characters can never push a borderline page past the detector's
+      // length cap. The marker stays in the body below so the agent can still see it.
+      const forDetection = res.markdown.replace(/^<!-- page-load:[^\n]*-->\n/, "");
+      if (isLoginWall({ title: "", text: forDetection, hasPasswordField: res.hasPasswordField })) {
         return {
           content: [
             {
@@ -44,7 +48,7 @@ export function createMcpServer(bridge: Bridge): McpServer {
     "browser_act",
     {
       description:
-        "Perform one action on the current tab and return a typed verdict plus a diff of what changed. Pass a `ref` from a prior browser_read; `fill` takes its text in `value`, `navigate` takes a URL in `value`, and `scroll` takes a direction in `value` (up/down/top/bottom) to page the viewport and reach lazily-loaded content like comments or infinite feeds.",
+        "Perform one action on the current tab and return a typed verdict plus a diff of what changed. Pass a `ref` from a prior browser_read; `fill` takes its text in `value`, `navigate` takes a URL in `value`, and `scroll` takes `value` = `more` to load lazy content (pages down until comments, replies, or feed items appear, or the page bottoms out — use this to reveal comments / infinite feeds) or a direction (up/down/top/bottom) for manual paging.",
       inputSchema: {
         ref: z.string(),
         action: z.enum(["click", "fill", "navigate", "scroll"]),
@@ -52,7 +56,7 @@ export function createMcpServer(bridge: Bridge): McpServer {
           .string()
           .optional()
           .describe(
-            "Text for fill, a URL for navigate, or a direction (up/down/top/bottom) for scroll.",
+            "Text for fill, a URL for navigate, or for scroll: `more` to load lazy content, or a direction (up/down/top/bottom).",
           ),
       },
     },

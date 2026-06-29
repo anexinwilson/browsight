@@ -46,8 +46,13 @@ if (!window.__browsightInjected) {
       if (message.kind === "read") {
         const snap = buildSnapshot(document);
         rememberSnapshot(snap.refs, snap.elements);
+        // Freshness marker: performance.timeOrigin is the page's load time — constant for one page
+        // instance, and it changes on every reload/navigation. It reflects the PAGE load, not this
+        // content script's re-injection (the same document keeps the same timeOrigin), so comparing
+        // it across two reads tells the agent whether the page actually refreshed/navigated.
+        const pageLoad = Math.round(performance.timeOrigin);
         sendResponse({
-          markdown: snap.markdown,
+          markdown: `<!-- page-load:${pageLoad} (changes on reload/navigate) -->\n${snap.markdown}`,
           refs: snap.refs,
           hasPasswordField: snap.hasPasswordField,
         });

@@ -36,8 +36,22 @@ export async function handleAct(send: Send, msg: ActRequest): Promise<void> {
   }
 
   if (msg.action === "navigate") {
+    // `navigate` with value "reload" refreshes the current page in place. A reload stays on the same
+    // origin, which the full-control check above already covered — so no destination gate is needed.
+    // Useful when a page is stuck mid-render or a lazy region won't settle.
+    if (msg.value === "reload" || msg.value === "refresh") {
+      await chrome.tabs.reload(tab.id);
+      send({
+        type: "act.response",
+        id: msg.id,
+        verdict: "navigated",
+        diff: { appeared: [], removed: [], changed: [] },
+        refs: [],
+      });
+      return;
+    }
     if (!msg.value) {
-      sendActSentinel(send, msg.id, "not_actionable", "navigate needs a url value");
+      sendActSentinel(send, msg.id, "not_actionable", "navigate needs a url value (or 'reload')");
       return;
     }
     // Gate the destination too: a grant on one site must not let the agent send the tab to an
