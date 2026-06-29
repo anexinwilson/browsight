@@ -55,3 +55,16 @@ export function isInteractive(el: Element): boolean {
   }
   return el.matches(NATIVE_INTERACTIVE);
 }
+
+/** True if an interactive element wraps content worth reading (a rich editor, list, or select), so
+ *  the snapshot should keep walking its children after emitting the marker rather than skip them. */
+export function isComposite(el: Element): boolean {
+  if ((el as HTMLElement).isContentEditable) {
+    return true;
+  }
+  const role = safeRole(el);
+  if (role === "listbox" || role === "combobox") {
+    return true;
+  }
+  return el.tagName.toLowerCase() === "select";
+}

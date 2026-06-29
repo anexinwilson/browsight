@@ -5,7 +5,7 @@
  */
 import type { Ref } from "@browsight/shared";
 import { elementState, fallbackName, safeName, safeRole } from "./accessibility.ts";
-import { isHidden, isInteractive } from "./dom.ts";
+import { isComposite, isHidden, isInteractive } from "./dom.ts";
 import { makeRecipe } from "./recipe.ts";
 
 export interface SnapshotResult {
@@ -97,29 +97,76 @@ export function buildSnapshot(doc: Document = document): SnapshotResult {
       elements.set(id, el);
       out.push(`[${role} ${JSON.stringify(name)} #${id}]`);
       lastRefName = name;
+      // Composite controls (contenteditable editors, listbox/combobox, select) wrap their content —
+      // keep walking so the editor text and option labels stay in the snapshot.
+      if (isComposite(el)) {
+        for (const child of Array.from(el.childNodes)) {
+          walk(child);
+        }
+        flush();
+      }
       return;
     }
 
     if (/^h[1-6]$/.test(tag)) {
       flush();
       const level = Number(tag.charAt(1));
-      const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+      const fullText = (el.textContent ?? "").replace(/\s+/g, " ").trim();
       // Card titles are frequently both a clickable ref and a heading with identical text (job
       // boards, search results, news indexes). If this heading just repeats the interactive ref
       // emitted immediately before it, drop it — the ref already carries the title and is clickable.
-      if (text && text === lastRefName) {
+      if (fullText && fullText === lastRefName) {
         lastRefName = "";
         return;
       }
-      if (text) {
-        out.push(`${"#".repeat(level)} ${text}`);
+      // Emit only the heading's own direct text, then walk its element children, so a link wrapped
+      // inside the heading (very common in feeds) still becomes a clickable reference instead of an
+      // un-actionable title.
+      let directText = "";
+      for (const child of Array.from(el.childNodes)) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          directText += ` ${child.textContent ?? ""}`;
+        }
+      }
+      directText = directText.replace(/\s+/g, " ").trim();
+      if (directText) {
+        out.push(`${"#".repeat(level)} ${directText}`);
       }
       lastRefName = "";
+      for (const child of Array.from(el.childNodes)) {
+        if (child.nodeType === Node.ELEMENT_NODE) {
+          walk(child);
+        }
+      }
+      return;
+    }
+
+    // Same-origin iframe: descend into its document. Cross-origin or otherwise blocked: emit an
+    // explicit marker so the gap is visible instead of a silent empty.
+    if (el instanceof HTMLIFrameElement) {
+      flush();
+      let frameDoc: Document | null = null;
+      try {
+        frameDoc = el.contentDocument;
+      } catch {
+        frameDoc = null;
+      }
+      if (frameDoc?.body) {
+        walk(frameDoc.body);
+      } else {
+        out.push("[unreadable frame (cross-origin)]");
+      }
       return;
     }
 
     for (const child of Array.from(el.childNodes)) {
       walk(child);
+    }
+    // Open shadow roots render content that is not in childNodes — descend into them too.
+    if (el.shadowRoot) {
+      for (const child of Array.from(el.shadowRoot.childNodes)) {
+        walk(child);
+      }
     }
     if (BLOCK_TAGS.has(tag)) {
       flush();
