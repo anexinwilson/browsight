@@ -21,7 +21,7 @@ function loadConfig(): BridgeConfig {
   const raw = readFileSync(path, "utf8");
   const parsed = JSON.parse(raw) as Partial<BridgeConfig>;
   if (typeof parsed.port !== "number" || typeof parsed.token !== "string") {
-    throw new Error(`invalid bridge config at ${path} — run \`npm run setup\``);
+    throw new TypeError(`invalid bridge config at ${path} — run \`npm run setup\``);
   }
   return { port: parsed.port, token: parsed.token };
 }
@@ -33,7 +33,9 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
 }
 
-main().catch((err: unknown) => {
+try {
+  await main();
+} catch (err: unknown) {
   process.stderr.write(`browsight server failed to start: ${String(err)}\n`);
   process.exit(1);
-});
+}

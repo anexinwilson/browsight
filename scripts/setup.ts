@@ -41,11 +41,14 @@ export function withBrowsightServer(
   return { ...config, mcpServers: { ...existing, browsight: entry } };
 }
 
+const BACKSLASH_ESCAPED = String.raw`\\`;
+const QUOTE_ESCAPED = String.raw`\"`;
+
 /** Render a string as a TOML value. Literal (single-quoted) strings need no escaping, which keeps
  *  Windows paths like C:\Users\... intact; fall back to a basic string only if a quote appears. */
 function tomlString(value: string): string {
   return value.includes("'")
-    ? `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+    ? `"${value.replaceAll("\\", BACKSLASH_ESCAPED).replaceAll('"', QUOTE_ESCAPED)}"`
     : `'${value}'`;
 }
 
@@ -60,7 +63,7 @@ export function browsightCodexBlock(entry: McpEntry): string {
  *  server in the file is preserved untouched. */
 export function withBrowsightCodex(existing: string, entry: McpEntry): string {
   const block = browsightCodexBlock(entry);
-  const header = existing.match(/^\[mcp_servers\.browsight\][^\n]*$/m);
+  const header = /^\[mcp_servers\.browsight\][^\n]*$/m.exec(existing);
   if (header?.index === undefined) {
     const base = existing.trim();
     return base ? `${base}\n\n${block}` : block;
@@ -218,8 +221,10 @@ const isDoctor = process.argv.slice(2).includes("doctor");
 if (isDoctor) {
   runDoctor();
 } else {
-  runSetup().catch((err: unknown) => {
+  try {
+    await runSetup();
+  } catch (err: unknown) {
     process.stderr.write(`setup failed: ${String(err)}\n`);
     process.exit(1);
-  });
+  }
 }

@@ -14,6 +14,10 @@ interface Connection {
   readonly host: string;
 }
 
+// Loopback-only allowlist — this extension is a local bridge and must never connect to remote hosts.
+const ALLOWED_WS_HOSTS = ["127.0.0.1", "localhost"] as const;
+type AllowedWsHost = (typeof ALLOWED_WS_HOSTS)[number];
+
 let socket: WebSocket | null = null;
 
 function send(msg: BridgeMessage): void {
@@ -45,10 +49,12 @@ async function connect(): Promise<void> {
   if (!conn) {
     return;
   }
-  if (!["127.0.0.1", "localhost"].includes(conn.host)) {
+  // Guard: strictly map to allowlisted literal — user-supplied conn.host never touches WebSocket (S8480)
+  const safeHost = ALLOWED_WS_HOSTS.find((h) => h === conn.host);
+  if (!safeHost) {
     return;
   }
-  const ws = new WebSocket(`ws://${conn.host}:${conn.port}`);
+  const ws = new WebSocket(`ws://${safeHost}:${conn.port}`);
   socket = ws;
   ws.addEventListener("open", () => {
     ws.send(
@@ -61,10 +67,12 @@ async function connect(): Promise<void> {
   });
   // deepcode ignore Insufficient postMessage Validation: this is a WebSocket, not window.postMessage
   ws.addEventListener("message", (ev) => {
-    if (ev.origin !== `ws://${conn.host}:${conn.port}`) {
+    const expectedOrigin = `ws://${safeHost}:${conn.port}`;
+    if (ev.origin === expectedOrigin) {
+      void route(String(ev.data));
+    } else {
       return;
     }
-    void route(String(ev.data));
   });
   ws.addEventListener("close", () => {
     if (socket === ws) {
@@ -103,4 +111,4 @@ chrome.alarms.create("browsight-keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener(() => {
   void connect();
 });
-void connect();
+await connect();

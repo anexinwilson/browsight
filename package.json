@@ -37,5 +37,8 @@
   },
   "lint-staged": {
     "*.{ts,js,json,md}": "biome check --write"
+  },
+  "overrides": {
+    "fast-uri": "^4.0.1"
   }
 }

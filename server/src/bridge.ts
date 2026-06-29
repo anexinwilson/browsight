@@ -73,7 +73,9 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
         return;
       }
 
-      if (!authed) {
+      if (authed) {
+        // Already authenticated — fall through to response handling below.
+      } else {
         if (msg.type === "auth" && tokensMatch(msg.token, opts.token)) {
           authed = true;
           active = ws;
@@ -144,7 +146,7 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
         id,
         ref: req.ref,
         action: req.action,
-        ...(req.value !== undefined ? { value: req.value } : {}),
+        ...(req.value === undefined ? {} : { value: req.value }),
       };
       return (await request(message, id)) as ActResponse;
     },

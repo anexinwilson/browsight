@@ -62,7 +62,6 @@ async function renderList(): Promise<void> {
 async function init(): Promise<void> {
   const origin = await currentOrigin();
   el<HTMLDivElement>("origin").textContent = origin ?? "(no site)";
-
   const timer = el<HTMLSelectElement>("timer");
   for (const opt of TIMER_OPTIONS) {
     const o = document.createElement("option");
@@ -70,7 +69,6 @@ async function init(): Promise<void> {
     o.textContent = opt.label;
     timer.append(o);
   }
-
   const tierRow = el<HTMLDivElement>("tier");
   const buttons = Array.from(tierRow.querySelectorAll("button"));
   for (const btn of buttons) {
@@ -81,7 +79,6 @@ async function init(): Promise<void> {
       }
     });
   }
-
   el<HTMLButtonElement>("grant").addEventListener("click", () => {
     if (!origin) {
       return;
@@ -95,8 +92,6 @@ async function init(): Promise<void> {
       }
     });
   });
-
   await renderList();
 }
-
 void init();

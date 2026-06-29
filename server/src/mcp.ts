@@ -64,7 +64,7 @@ export function createMcpServer(bridge: Bridge): McpServer {
       const res = await bridge.actActiveTab({
         ref,
         action,
-        ...(value !== undefined ? { value } : {}),
+        ...(value === undefined ? {} : { value }),
       });
       if (res.sentinel) {
         return { content: [{ type: "text" as const, text: `⚠ ${res.sentinel.hint}` }] };

@@ -49,7 +49,6 @@ async function init(): Promise<void> {
     o.textContent = opt.label;
     timer.append(o);
   }
-
   el<HTMLButtonElement>("add").addEventListener("click", () => {
     setStatus("");
     const raw = el<HTMLInputElement>("origin").value.trim();
@@ -76,8 +75,6 @@ async function init(): Promise<void> {
       }
     });
   });
-
   await render();
 }
-
 void init();

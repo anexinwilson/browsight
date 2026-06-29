@@ -11,11 +11,11 @@ const PASSWORD_TYPE = /\btype=["']password["']/i;
 // S8786: Two explicit, non-overlapping alternatives instead of a mixed ["'] character class.
 const VALUE_ATTR = /\bvalue="[^"]*"|\bvalue='[^']*'/gi;
 // S8786: Use [ \t]+ instead of \s+ to avoid matching newlines and reduce backtracking surface.
-const BEARER = /\bBearer[ \t]+[A-Za-z0-9._-]+/gi;
+const BEARER = /\bBearer[ \t]+[a-z0-9._-]+/gi;
 // Common secret shapes: Stripe/OpenAI-style keys (hyphen or underscore), GitHub tokens, AWS access
 // keys, Slack tokens, Google API keys, and JWTs.
 const KEY_PATTERNS = [
-  /\b(?:sk|pk|rk)[-_][A-Za-z0-9_]{12,}\b/g,
+  /\b(?:sk|pk|rk)[-_]\w{12,}\b/g,
   /\bgh[pousr]_[A-Za-z0-9]{16,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
