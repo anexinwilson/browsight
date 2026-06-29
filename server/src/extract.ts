@@ -25,7 +25,12 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-const LOGIN_HINTS = [/sign in/i, /log in/i, /enter your password/i];
+const LOGIN_HINTS = [/sign in/i, /log in/i, /enter your password/i, /forgot password/i];
+
+// A genuine login wall is a short page dominated by the sign-in form. Authenticated pages are far
+// larger, so this size cap separates them from a settings page that merely has a "change password"
+// field or a "Sign in" link in shared nav.
+const MAX_LOGIN_WALL_CHARS = 2000;
 
 export interface LoginSignals {
   readonly title: string;
@@ -38,5 +43,9 @@ export function isLoginWall(signals: LoginSignals): boolean {
   if (!signals.hasPasswordField) {
     return false;
   }
-  return LOGIN_HINTS.some((re) => re.test(signals.title) || re.test(signals.text));
+  const text = `${signals.title}\n${signals.text}`;
+  if (text.length > MAX_LOGIN_WALL_CHARS) {
+    return false;
+  }
+  return LOGIN_HINTS.some((re) => re.test(text));
 }

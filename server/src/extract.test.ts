@@ -29,3 +29,8 @@ test("a login wall is detected; a normal logged-in page is not", () => {
     false,
   );
 });
+
+test("a large authenticated page with a password field is not a login wall", () => {
+  const big = `Account settings\n${"Some account content here. ".repeat(200)}\nChange password\nSign in`;
+  assert.equal(isLoginWall({ title: "Account", text: big, hasPasswordField: true }), false);
+});

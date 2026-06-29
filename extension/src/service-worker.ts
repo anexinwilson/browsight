@@ -205,7 +205,23 @@ async function handleAct(msg: ActRequest): Promise<void> {
       ...(result.sentinel ? { sentinel: result.sentinel } : {}),
     });
   } catch (err) {
-    sendActSentinel(msg.id, "frame_unreachable", `could not act on the page: ${String(err)}`);
+    const message = String(err);
+    // A click or submit that navigates tears down the content script before it can reply, so the
+    // message channel closes. Report that as a clean "navigated" result instead of a raw error —
+    // the next browser_read will see the new page.
+    const navigatedAway =
+      /back\/forward cache|message channel closed|message port closed|Receiving end does not exist/i;
+    if (navigatedAway.test(message)) {
+      send({
+        type: "act.response",
+        id: msg.id,
+        verdict: "navigated",
+        diff: { appeared: [], removed: [], changed: [] },
+        refs: [],
+      });
+      return;
+    }
+    sendActSentinel(msg.id, "frame_unreachable", `could not act on the page: ${message}`);
   }
 }
 

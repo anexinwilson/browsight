@@ -75,7 +75,11 @@ export function createMcpServer(bridge: Bridge): McpServer {
         .map((r) => `[${r.role} ${JSON.stringify(r.name)} #${r.id}]`)
         .join("\n");
       const summary = changes ? `${res.verdict} — ${changes}` : res.verdict;
-      return { content: [{ type: "text" as const, text: `${summary}\n\n${refsList}` }] };
+      // Scrub secrets from the act output too, not just reads: ref names and diff entries are live
+      // accessible names that can contain a token or key.
+      return {
+        content: [{ type: "text" as const, text: stripSecrets(`${summary}\n\n${refsList}`) }],
+      };
     },
   );
 
