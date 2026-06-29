@@ -1,10 +1,18 @@
 {
   "name": "browsight",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
   "description": "A universal, permissioned read-and-act tool that exposes your real, authenticated Chrome to any MCP client.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anexinwilson/browsight.git"
+  },
+  "keywords": ["mcp", "ai", "llm", "browser", "automation"],
+  "bin": {
+    "browsight": "./scripts/setup.ts"
+  },
+  "files": ["server/dist", "extension/dist", "shared/dist", "scripts"],
   "engines": {
     "node": ">=24"
   },
@@ -16,12 +24,18 @@
     "format": "biome format --write .",
     "test": "node --test \"**/*.test.ts\"",
     "setup": "node scripts/setup.ts",
-    "doctor": "node scripts/setup.ts doctor"
+    "doctor": "node scripts/setup.ts doctor",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^24.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.11",
     "tsdown": "^0.22.3",
     "typescript": "^5.7.0"
+  },
+  "lint-staged": {
+    "*.{ts,js,json,md}": "biome check --write"
   }
 }

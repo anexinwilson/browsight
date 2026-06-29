@@ -1,0 +1,10 @@
+node_modules/
+scratch/
+tests/
+.agents/
+.github/
+.husky/
+biome.json
+tsconfig.base.json
+*.log
+src/

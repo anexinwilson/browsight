@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * `browsight setup` — the one-command bootstrap.
  *
