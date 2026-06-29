@@ -7,7 +7,7 @@
 import type { ActRequest, Diff, Ref, Sentinel, SentinelKind, Verdict } from "@browsight/shared";
 import { decideAccess } from "../permissions/policy.ts";
 import { listGrants } from "../permissions/storage.ts";
-import { type Send, activeTab, originOf } from "./common.ts";
+import { type Send, currentTab, originOf } from "./common.ts";
 
 interface ActContentResult {
   readonly verdict: Verdict;
@@ -17,7 +17,7 @@ interface ActContentResult {
 }
 
 export async function handleAct(send: Send, msg: ActRequest): Promise<void> {
-  const tab = await activeTab();
+  const tab = await currentTab();
   if (!tab?.id || !tab.url) {
     sendActSentinel(send, msg.id, "frame_unreachable", "no active tab to act on");
     return;
@@ -91,7 +91,7 @@ export async function handleAct(send: Send, msg: ActRequest): Promise<void> {
     if (navigatedAway.test(message)) {
       // If the click drove the tab to an origin the user hasn't whitelisted, say so — a link click
       // must not quietly move the agent somewhere it has no grant for.
-      const moved = await activeTab();
+      const moved = await currentTab();
       const newOrigin = moved?.url ? originOf(moved.url) : "";
       if (newOrigin && newOrigin !== origin && !decideAccess(grants, newOrigin, now).read) {
         sendActSentinel(

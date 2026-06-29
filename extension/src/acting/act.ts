@@ -80,6 +80,44 @@ function scrollViewport(direction: string): void {
   }
 }
 
+/**
+ * Click by dispatching a realistic pointer+mouse gesture rather than a bare `el.click()`. Modern
+ * web-component sites (YouTube's Polymer, Reddit's Lit, many React routers) bind their tap handlers
+ * to pointerdown/up and ignore a lone synthetic click, so `.click()` is a silent no-op there. Firing
+ * the full sequence — with `composed: true` so it crosses shadow-DOM boundaries — makes those
+ * handlers run, while the trailing `click` still triggers native activation (link nav, form submit).
+ */
+function dispatchClick(el: Element): void {
+  const rect = (el as HTMLElement).getBoundingClientRect?.();
+  const clientX = rect ? rect.left + rect.width / 2 : 0;
+  const clientY = rect ? rect.top + rect.height / 2 : 0;
+  const mouse: MouseEventInit = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    view: window,
+    button: 0,
+    clientX,
+    clientY,
+  };
+  const pointer: PointerEventInit = {
+    ...mouse,
+    pointerId: 1,
+    pointerType: "mouse",
+    isPrimary: true,
+  };
+  el.dispatchEvent(new PointerEvent("pointerover", pointer));
+  el.dispatchEvent(new PointerEvent("pointerenter", pointer));
+  el.dispatchEvent(new PointerEvent("pointerdown", pointer));
+  el.dispatchEvent(new MouseEvent("mousedown", mouse));
+  if (el instanceof HTMLElement) {
+    el.focus();
+  }
+  el.dispatchEvent(new PointerEvent("pointerup", pointer));
+  el.dispatchEvent(new MouseEvent("mouseup", mouse));
+  el.dispatchEvent(new MouseEvent("click", mouse));
+}
+
 /** Settle, snapshot the result, remember it for the next act, and report verdict + diff + refs. */
 async function settleAndReport(
   action: Action,
@@ -124,15 +162,7 @@ export async function performAct(ref: string, action: Action, value?: string): P
 
   switch (action) {
     case "click":
-      if (el instanceof HTMLElement) {
-        el.click();
-      } else {
-        // SVG-rooted and other non-HTML controls have no .click() — dispatch a real click event so
-        // the action lands instead of silently no-op'ing into a misleading "no_change".
-        el.dispatchEvent(
-          new MouseEvent("click", { bubbles: true, cancelable: true, view: window }),
-        );
-      }
+      dispatchClick(el);
       break;
     case "fill": {
       if (value === undefined) {

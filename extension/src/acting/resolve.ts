@@ -8,13 +8,31 @@ import type { Recipe, Ref, Sentinel } from "@browsight/shared";
 import { safeName, safeRole } from "../perception/accessibility.ts";
 import { INTERACTIVE_SELECTOR, isHidden } from "../perception/dom.ts";
 
-let lastRefs: Ref[] = [];
-let lastElements = new Map<number, Element>();
+interface RefState {
+  refs: Ref[];
+  elements: Map<number, Element>;
+}
+
+/**
+ * Keep the ref/element map on a stable per-tab global rather than a module-level binding. The content
+ * script is re-injected on every read and every act, which re-runs this module with a fresh binding —
+ * so a module-level cache can be empty at act time even immediately after a read, making every ref
+ * resolve to `ref_stale`. The isolated world's `globalThis` persists across those re-injections, so
+ * the act sees the references the read recorded.
+ */
+function refState(): RefState {
+  const g = globalThis as typeof globalThis & { __browsightRefs?: RefState };
+  if (!g.__browsightRefs) {
+    g.__browsightRefs = { refs: [], elements: new Map() };
+  }
+  return g.__browsightRefs;
+}
 
 /** Remember the element map from the most recent snapshot so refs resolve at act time. */
 export function rememberSnapshot(refs: Ref[], elements: Map<number, Element>): void {
-  lastRefs = refs;
-  lastElements = elements;
+  const s = refState();
+  s.refs = refs;
+  s.elements = elements;
 }
 
 export type Resolution = { readonly el: Element } | { readonly sentinel: Sentinel };
@@ -52,11 +70,32 @@ function narrow(candidates: Element[], recipe: Recipe): Element[] {
   return atOrdinal ? [atOrdinal] : pool;
 }
 
-/** Resolve a `#id` to a live element: a re-validated stored fast path, then durable-recipe matching. */
+/**
+ * Every interactive element under `root`, descending into open shadow roots — the same reach the
+ * snapshot has when it reads the page. Without this, references recorded inside a web component's
+ * shadow DOM (e.g. Reddit's entire `shreddit-*` UI) can be read but never re-resolved at act time,
+ * because a plain `document.querySelectorAll` does not cross shadow boundaries.
+ */
+function allInteractive(root: Document | ShadowRoot): Element[] {
+  const out = Array.from(root.querySelectorAll(INTERACTIVE_SELECTOR));
+  for (const host of root.querySelectorAll("*")) {
+    if (host.shadowRoot) {
+      out.push(...allInteractive(host.shadowRoot));
+    }
+  }
+  return out;
+}
+
+/** Resolve a `#id` to a live element: the stored element handle first, then durable-recipe matching
+ *  (which descends shadow roots). Accepts the id with or without the leading "#". */
 export function resolveRef(ref: string): Resolution {
-  const id = Number(ref);
-  const recipe = lastRefs.find((r) => r.id === id)?.recipe;
-  const stored = lastElements.get(id);
+  const { refs, elements } = refState();
+  const id = Number(ref.replace(/^#/, ""));
+  const recipe = refs.find((r) => r.id === id)?.recipe;
+  // The stored element is a direct handle, so it works through shadow DOM / iframes for free and
+  // survives a re-render that only moves the node; the role+name re-check below rejects it if the
+  // node was recycled into a different control. The recipe re-resolution is the fallback.
+  const stored = elements.get(id);
   // Fast path: the stored element, but only if it still looks like the same control — a recycled
   // (virtualized) row keeps the same connected node while changing its accessible name.
   if (
@@ -73,7 +112,7 @@ export function resolveRef(ref: string): Resolution {
       },
     };
   }
-  let matches = Array.from(document.querySelectorAll(INTERACTIVE_SELECTOR)).filter(
+  let matches = allInteractive(document).filter(
     (el) => !isHidden(el) && safeRole(el) === recipe.role && safeName(el) === recipe.name,
   );
   if (matches.length > 1) {

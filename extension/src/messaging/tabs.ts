@@ -7,14 +7,14 @@
 import type { Sentinel, TabInfo, TabsRequest } from "@browsight/shared";
 import { decideAccess } from "../permissions/policy.ts";
 import { listGrants } from "../permissions/storage.ts";
-import { type Send, activeTab, originOf, readTabContent } from "./common.ts";
+import { type Send, currentTab, originOf, readTabContent, setCurrentTab } from "./common.ts";
 import { accessLabel, resolveTabSelection } from "./tab-select.ts";
 
 export async function handleTabs(send: Send, msg: TabsRequest): Promise<void> {
   const grants = await listGrants();
   const now = Date.now();
   const all = await chrome.tabs.query({});
-  const active = await activeTab();
+  const active = await currentTab();
   const infos: TabInfo[] = [];
   for (const t of all) {
     if (typeof t.id !== "number" || !t.url || !/^https?:/.test(t.url)) {
@@ -55,6 +55,8 @@ export async function handleTabs(send: Send, msg: TabsRequest): Promise<void> {
     if (typeof win === "number") {
       await chrome.windows.update(win, { focused: true });
     }
+    // Record the switch so subsequent read/act target this tab regardless of which window has focus.
+    await setCurrentTab(target.id);
     const snap = await readTabContent(target.id);
     send({
       type: "tabs.response",
