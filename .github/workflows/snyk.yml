@@ -21,7 +21,7 @@ jobs:
           node-version: 24.x
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Run Snyk SCA (dependency scan)
         uses: snyk/actions/node@8e119fbb6c251787721d34ba683ed48eba792766 # master

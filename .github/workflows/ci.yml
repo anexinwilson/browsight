@@ -16,8 +16,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm run lint
-      - run: npm test
+      - run: node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=lcov.info "**/*.test.ts"
       - run: npm run build

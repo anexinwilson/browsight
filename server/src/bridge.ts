@@ -68,14 +68,13 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
     ws.on("message", (data) => {
       let msg: BridgeMessage;
       try {
-        msg = BridgeMessageSchema.parse(JSON.parse(data.toString()));
+        const text = Buffer.from(data as Buffer).toString("utf-8");
+        msg = BridgeMessageSchema.parse(JSON.parse(text));
       } catch {
         return;
       }
 
-      if (authed) {
-        // Already authenticated — fall through to response handling below.
-      } else {
+      if (!authed) {
         if (msg.type === "auth" && tokensMatch(msg.token, opts.token)) {
           authed = true;
           active = ws;
@@ -85,6 +84,7 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
         }
         return;
       }
+      // Already authenticated — fall through to response handling below.
 
       if (
         msg.type === "read.response" ||

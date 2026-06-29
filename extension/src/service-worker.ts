@@ -54,7 +54,12 @@ async function connect(): Promise<void> {
   if (!safeHost) {
     return;
   }
-  const ws = new WebSocket(`ws://${safeHost}:${conn.port}`);
+  // Guard: parse port to a validated integer so user-supplied JSON data never enters the URL directly (S8480)
+  const safePort = Number.parseInt(String(conn.port), 10);
+  if (Number.isNaN(safePort) || safePort < 1 || safePort > 65535) {
+    return;
+  }
+  const ws = new WebSocket(`ws://${safeHost}:${safePort}`);
   socket = ws;
   ws.addEventListener("open", () => {
     ws.send(
@@ -67,7 +72,7 @@ async function connect(): Promise<void> {
   });
   // deepcode ignore Insufficient postMessage Validation: this is a WebSocket, not window.postMessage
   ws.addEventListener("message", (ev) => {
-    const expectedOrigin = `ws://${safeHost}:${conn.port}`;
+    const expectedOrigin = `ws://${safeHost}:${safePort}`;
     if (ev.origin === expectedOrigin) {
       void route(String(ev.data));
     } else {

@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export interface McpEntry {
   readonly command: string;
@@ -108,7 +108,7 @@ function codexConfigPath(): string {
   return join(home(), ".codex", "config.toml");
 }
 
-function tryPort(port: number): Promise<number> {
+export function tryPort(port: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = createServer();
     srv.once("error", reject);
@@ -121,7 +121,7 @@ function tryPort(port: number): Promise<number> {
   });
 }
 
-async function pickPort(preferred: number): Promise<number> {
+export async function pickPort(preferred: number): Promise<number> {
   try {
     return await tryPort(preferred);
   } catch {
@@ -149,7 +149,7 @@ function readJson(path: string): Record<string, unknown> {
   }
 }
 
-async function runSetup(): Promise<void> {
+export async function runSetup(): Promise<void> {
   // Reuse the existing token + port if setup has run before, so re-running never moves the port out
   // from under a server that is already using it (the cause of ERR_CONNECTION_REFUSED on re-setup).
   const existing = readJson(bridgeConfigPath());
@@ -187,7 +187,7 @@ async function runSetup(): Promise<void> {
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
-function runDoctor(): void {
+export function runDoctor(): void {
   const codexPath = codexConfigPath();
   const codexRegistered =
     existsSync(codexPath) && /^\[mcp_servers\.browsight\]/m.test(readFileSync(codexPath, "utf8"));
@@ -217,14 +217,17 @@ function runDoctor(): void {
   );
 }
 
-const isDoctor = process.argv.slice(2).includes("doctor");
-if (isDoctor) {
-  runDoctor();
-} else {
-  try {
-    await runSetup();
-  } catch (err: unknown) {
-    process.stderr.write(`setup failed: ${String(err)}\n`);
-    process.exit(1);
+const isMain = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+if (isMain) {
+  const isDoctor = process.argv.slice(2).includes("doctor");
+  if (isDoctor) {
+    runDoctor();
+  } else {
+    try {
+      await runSetup();
+    } catch (err: unknown) {
+      process.stderr.write(`setup failed: ${String(err)}\n`);
+      process.exit(1);
+    }
   }
 }

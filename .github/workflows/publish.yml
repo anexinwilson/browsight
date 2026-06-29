@@ -21,12 +21,12 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build project
         run: npm run build
 
       - name: Publish to NPM with Provenance
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # (Optional) If OIDC Trusted Publisher is not set up, fallback to token. OIDC prefers token-less setup, but this env is often required by the action wrapper.

@@ -17,7 +17,7 @@ export interface ActResult {
   readonly sentinel?: Sentinel;
 }
 
-function fillValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+export function fillValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   const proto =
     el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
@@ -33,7 +33,7 @@ function fillValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): v
 }
 
 /** Select an <option> by its value, label, or visible text. */
-function fillSelect(el: HTMLSelectElement, value: string): boolean {
+export function fillSelect(el: HTMLSelectElement, value: string): boolean {
   const match = Array.from(el.options).find(
     (o) => o.value === value || o.label === value || o.text.trim() === value,
   );
@@ -47,7 +47,7 @@ function fillSelect(el: HTMLSelectElement, value: string): boolean {
 }
 
 /** Replace the text of a contenteditable host, dispatching the input events editors listen for. */
-function fillEditable(el: HTMLElement, value: string): boolean {
+export function fillEditable(el: HTMLElement, value: string): boolean {
   el.focus();
   el.dispatchEvent(
     new InputEvent("beforeinput", {
@@ -113,7 +113,7 @@ function scrollViewport(direction: string): { movedPx: number } {
  * the full sequence — with `composed: true` so it crosses shadow-DOM boundaries — makes those
  * handlers run, while the trailing `click` still triggers native activation (link nav, form submit).
  */
-function dispatchClick(el: Element): void {
+export function dispatchClick(el: Element): void {
   const rect = (el as HTMLElement).getBoundingClientRect?.();
   const clientX = rect ? rect.left + rect.width / 2 : 0;
   const clientY = rect ? rect.top + rect.height / 2 : 0;
@@ -239,6 +239,44 @@ async function handleViewportScroll(
   return undefined;
 }
 
+function tryPerformFill(
+  el: Element,
+  value: string | undefined,
+  before: { readonly refs: Ref[]; readonly elements: Map<number, Element> },
+):
+  | { kind: "success"; valueSet: boolean }
+  | { kind: "not_actionable"; result: ActResult }
+  | { kind: "ignored" } {
+  if (value === undefined) {
+    return { kind: "ignored" };
+  }
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    fillValue(el, value);
+    return { kind: "success", valueSet: el.value === value };
+  }
+  if (el instanceof HTMLSelectElement) {
+    return { kind: "success", valueSet: fillSelect(el, value) };
+  }
+  if (el instanceof HTMLElement && el.isContentEditable) {
+    return { kind: "success", valueSet: fillEditable(el, value) };
+  }
+
+  // Not a fillable control — say so explicitly instead of silently reporting no_change.
+  rememberSnapshot(before.refs, before.elements);
+  return {
+    kind: "not_actionable",
+    result: {
+      verdict: "no_change",
+      diff: EMPTY_DIFF,
+      refs: before.refs,
+      sentinel: {
+        kind: "not_actionable",
+        hint: "that element can't be filled — re-read and use a text field, dropdown, or editor",
+      },
+    },
+  };
+}
+
 /** Resolve `ref`, perform `action`, settle, and report the verdict + diff + fresh references. */
 export async function performAct(ref: string, action: Action, value?: string): Promise<ActResult> {
   const scrollResult = await handleViewportScroll(action, value);
@@ -267,28 +305,12 @@ export async function performAct(ref: string, action: Action, value?: string): P
       dispatchClick(el);
       break;
     case "fill": {
-      if (value === undefined) {
-        break;
+      const fillResult = tryPerformFill(el, value, before);
+      if (fillResult.kind === "not_actionable") {
+        return fillResult.result;
       }
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        fillValue(el, value);
-        valueSet = el.value === value;
-      } else if (el instanceof HTMLSelectElement) {
-        valueSet = fillSelect(el, value);
-      } else if (el instanceof HTMLElement && el.isContentEditable) {
-        valueSet = fillEditable(el, value);
-      } else {
-        // Not a fillable control — say so explicitly instead of silently reporting no_change.
-        rememberSnapshot(before.refs, before.elements);
-        return {
-          verdict: "no_change",
-          diff: EMPTY_DIFF,
-          refs: before.refs,
-          sentinel: {
-            kind: "not_actionable",
-            hint: "that element can't be filled — re-read and use a text field, dropdown, or editor",
-          },
-        };
+      if (fillResult.kind === "success") {
+        valueSet = fillResult.valueSet;
       }
       break;
     }

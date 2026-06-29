@@ -60,11 +60,11 @@ export function createMcpServer(bridge: Bridge): McpServer {
           ),
       },
     },
-    async ({ ref, action, value }) => {
+    async (req) => {
       const res = await bridge.actActiveTab({
-        ref,
-        action,
-        ...(value === undefined ? {} : { value }),
+        ref: req.ref,
+        action: req.action,
+        ...(req.value !== undefined ? { value: req.value } : {}),
       });
       if (res.sentinel) {
         return { content: [{ type: "text" as const, text: `⚠ ${res.sentinel.hint}` }] };

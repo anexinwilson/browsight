@@ -19,8 +19,8 @@ const KEY_PATTERNS = [
   /\bgh[pousr]_[A-Za-z0-9]{16,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
-  /\bAIza[0-9A-Za-z_-]{35}\b/g,
-  /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+  /\bAIza[\w-]{35}\b/g,
+  /\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g,
 ];
 
 /** Strip password-field values and common key/token shapes so secrets never reach the model. */
