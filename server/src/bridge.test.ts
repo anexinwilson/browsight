@@ -51,3 +51,18 @@ test("bridge rejects a request when no extension is connected", async () => {
     await bridge.close();
   }
 });
+
+test("a second bridge on the same port degrades gracefully instead of crashing", async () => {
+  const port = 8244;
+  const first = startBridge({ port, token: "t" });
+  // Same port → EADDRINUSE on the second server. Without the error handler this would crash the
+  // process on an unhandled 'error' event; with it, requests reject with a clear message.
+  const second = startBridge({ port, token: "t" });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 100)); // let the 'error' event land
+    await assert.rejects(() => second.readActiveTab(null), /only one client can drive browsight/);
+  } finally {
+    await first.close();
+    await second.close();
+  }
+});

@@ -1,11 +1,12 @@
 /**
  * The MCP surface. Registers the tools the client calls and turns bridge responses into
- * token-lean results: `browser_read` and `browser_act`.
+ * token-lean results: `browser_read`, `browser_act`, and `browser_tabs`.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Bridge } from "./bridge.ts";
 import { estimateTokens, isLoginWall, stripSecrets } from "./extract.ts";
+import { formatTabs } from "./tabs.ts";
 
 /** Build the MCP server, wiring `browser_read` and `browser_act` to the bridge. */
 export function createMcpServer(bridge: Bridge): McpServer {
@@ -80,6 +81,32 @@ export function createMcpServer(bridge: Bridge): McpServer {
       return {
         content: [{ type: "text" as const, text: stripSecrets(`${summary}\n\n${refsList}`) }],
       };
+    },
+  );
+
+  server.registerTool(
+    "browser_tabs",
+    {
+      description:
+        "List the open Chrome tabs and switch between them. With no argument, lists every open tab and whether each is allowed — browsight can only switch to and read sites the user has whitelisted; others are shown so you can ask the user to allow them. Pass `select` (a tab title, origin, or id) to switch to that tab and read it. If the chosen tab isn't whitelisted, the result tells the user to allow it in the popup. browser_read and browser_act always operate on the active tab, so use this to move focus between the user's allowed sites.",
+      inputSchema: { select: z.string().optional() },
+    },
+    async ({ select }) => {
+      const res = await bridge.listTabs(select ?? null);
+      if (res.sentinel) {
+        // Still show the list so the user can see what's open and which tab to whitelist.
+        return {
+          content: [
+            { type: "text" as const, text: `⚠ ${res.sentinel.hint}\n\n${formatTabs(res.tabs)}` },
+          ],
+        };
+      }
+      if (res.switchedTo !== undefined && res.markdown !== undefined) {
+        const body = stripSecrets(res.markdown);
+        const header = `Switched to ${res.switchedTo}.\nToken estimate: ~${estimateTokens(body)}`;
+        return { content: [{ type: "text" as const, text: `${header}\n\n${body}` }] };
+      }
+      return { content: [{ type: "text" as const, text: formatTabs(res.tabs) }] };
     },
   );
 

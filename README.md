@@ -39,11 +39,12 @@ the live, logged-in page
 
 Since Chrome 136 disabled remote-debugging on the default profile, an in-browser extension is the only way to reach authenticated tabs — that is why browsight is an extension, not CDP.
 
-## The two tools
+## The three tools
 
 ```
 browser_read  { url? }                  → the current tab as clean markdown + numbered references
 browser_act   { ref, action, value? }   → one action (click/fill/navigate/scroll) + verdict + diff
+browser_tabs  { select? }               → list the open tabs, or switch to a whitelisted one and read it
 ```
 
 A read looks like this:
@@ -65,6 +66,7 @@ The agent reads that, then acts by reference — `click #5`, `fill #6 with …`.
 - **Self-healing references** — re-resolved at act time from a durable recipe (role + name + `data-*` + text); never hashed CSS classes; returns ranked candidates when ambiguous instead of guessing.
 - **Typed results** — every action returns a verdict (`navigated` / `dom_changed` / `value_set` / `no_change`) plus a diff of what changed.
 - **Capability-based permissions** — deny-by-default whitelist with read-only / full-control tiers and an optional timer, backed by Chrome's own host-permission system; policy lives in the extension, outside the model's reach.
+- **Multi-tab, still gated** — `browser_tabs` lists the open tabs and switches between them, but can only switch to and read sites you have whitelisted; non-allowed tabs are surfaced by origin (never full URL) so the agent can ask you to allow them.
 - **One-command setup** — `npm run setup` wires both sides (zero token copy-paste); `npm run doctor` checks the connection.
 - **Any MCP client** — Claude Code, Cursor, Windsurf, Codex, Antigravity, … (only the one-time registration differs).
 
@@ -74,7 +76,7 @@ The agent reads that, then acts by reference — `click #5`, `fill #6 with …`.
 - **MCP:** `@modelcontextprotocol/sdk` (stdio) · **Transport:** `ws` + a per-install token
 - **Extension:** Manifest V3 (service worker + content script + popup/options)
 - **Perception:** `dom-accessibility-api` · **Validation:** zod v4 (one shared, typed protocol)
-- **Diff:** jsdiff · **Build:** tsdown (server) + esbuild (extension) · **Lint/format:** Biome · **Tests:** `node --test`
+- **Diff:** a structural reference diff computed in-extension (no library) · **Build:** tsdown (server) + esbuild (extension) · **Lint/format:** Biome · **Tests:** `node --test`
 
 ## Install & try it
 
@@ -104,7 +106,9 @@ The agent calls `browser_read` / `browser_act` behind the scenes. Run `npm run d
 
 ## Security model
 
-Capability = (site × action), deny-by-default, revocable. The agent **requests**; the extension — the only component that can reach the page — **decides and executes**. Policy is stored in the extension and is neither readable nor editable by the model. Honest framing: this is **blast-radius containment**, not a claim to prevent prompt injection. Details and decision records are in [docs/DESIGN.md](docs/DESIGN.md).
+Capability = (site × action), deny-by-default, revocable. The agent **requests**; the extension — the only component that can reach the page — **decides and executes**. The whitelist is stored in `chrome.storage.local` and is **written only by the popup/options UI, after a Chrome-native host-permission prompt you approve** — the model can neither read nor edit it, and no protocol message grants access, so no connected client can escalate its own privileges. Every read, act, navigation, and tab switch is gated by one tested decision (`decideAccess`); the origin checked comes from the real tab, not from anything the agent sends.
+
+Honest framing: the whitelist is **per-site, not per-client** (all connected clients share it, so allow only what you would let any agent do), and this is **blast-radius containment**, not a claim to prevent prompt injection. Details and decision records are in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Project structure
 
@@ -136,7 +140,7 @@ The full permission layer (per-action confirmation, provenance tripwire, audit l
 
 - Token reductions vary by page; application-shaped pages cost more than content pages.
 - Synthetic input is `isTrusted:false`; a few hardened controls need more (deferred).
-- Content inside shadow DOM and iframes isn't read yet — descent into open shadow roots / same-origin iframes and a `frame_unreachable` sentinel for the rest are planned (see [ROADMAP.md](docs/ROADMAP.md)).
+- Content inside **open** shadow roots and **same-origin** iframes is read; cross-origin frames can't be reached from the page and are marked `[unreadable frame (cross-origin)]` so the gap is visible rather than silent.
 - This is an **MVP** — read + act + a whitelist gate. The richer controls are on the roadmap.
 
 ## License

@@ -12,6 +12,7 @@ import {
   type BridgeMessage,
   BridgeMessageSchema,
   type ReadResponse,
+  type TabsResponse,
 } from "@browsight/shared";
 import { type WebSocket, WebSocketServer } from "ws";
 
@@ -30,6 +31,8 @@ export interface Bridge {
   readActiveTab(url: string | null): Promise<ReadResponse>;
   /** Ask the extension to perform one action on the active tab. */
   actActiveTab(req: { ref: string; action: Action; value?: string }): Promise<ActResponse>;
+  /** List the open tabs, optionally switching to (and reading) the one matching `select`. */
+  listTabs(select: string | null): Promise<TabsResponse>;
   close(): Promise<void>;
 }
 
@@ -38,6 +41,21 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
   const wss = new WebSocketServer({ host: "127.0.0.1", port: opts.port, maxPayload: MAX_PAYLOAD });
   const pending = new Map<string, Pending>();
   let active: WebSocket | null = null;
+  let listenError: string | null = null;
+
+  // If the port is already taken — almost always a second browsight server launched by another MCP
+  // client — the server emits 'error'. Handle it so the process degrades with a clear message instead
+  // of crashing on an unhandled 'error' event. We deliberately do NOT rebind to a different port: the
+  // extension dials one known port, so grabbing another would hijack it from the instance already
+  // serving it. Stepping aside is the correct behaviour — only one client drives browsight at a time.
+  wss.on("error", (err: Error) => {
+    const code = (err as NodeJS.ErrnoException).code;
+    listenError =
+      code === "EADDRINUSE"
+        ? `another browsight instance is already using 127.0.0.1:${opts.port} — only one client can drive browsight at a time; close it in the other client, or drive browsight from there.`
+        : `the browsight bridge could not start: ${err.message}`;
+    process.stderr.write(`browsight: ${listenError}\n`);
+  });
 
   wss.on("connection", (ws) => {
     let authed = false;
@@ -66,7 +84,11 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
         return;
       }
 
-      if (msg.type === "read.response" || msg.type === "act.response") {
+      if (
+        msg.type === "read.response" ||
+        msg.type === "act.response" ||
+        msg.type === "tabs.response"
+      ) {
         const p = pending.get(msg.id);
         if (p) {
           clearTimeout(p.timer);
@@ -92,6 +114,10 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
 
   function request(message: BridgeMessage, id: string): Promise<BridgeMessage> {
     return new Promise((resolve, reject) => {
+      if (listenError) {
+        reject(new Error(listenError));
+        return;
+      }
       if (!active) {
         reject(new Error("the browsight extension is not connected — load it in Chrome"));
         return;
@@ -121,6 +147,11 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
         ...(req.value !== undefined ? { value: req.value } : {}),
       };
       return (await request(message, id)) as ActResponse;
+    },
+    async listTabs(select) {
+      const id = randomUUID();
+      const res = await request({ type: "tabs.request", id, select }, id);
+      return res as TabsResponse;
     },
     close() {
       return new Promise((resolve) => {

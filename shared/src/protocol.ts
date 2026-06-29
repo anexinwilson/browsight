@@ -104,6 +104,40 @@ export const ActResponseSchema = z.object({
 });
 export type ActResponse = z.infer<typeof ActResponseSchema>;
 
+/** One open browser tab, as surfaced to the agent. `access` mirrors the whitelist: "none" (not
+ *  allowed — the origin and title are still shown so the user can be told to whitelist it), "read",
+ *  or "full". The full URL is deliberately not sent — only the origin — to limit what leaks. */
+export const TabInfoSchema = z.object({
+  id: z.number().int(),
+  title: z.string(),
+  origin: z.string(),
+  active: z.boolean(),
+  access: z.enum(["none", "read", "full"]),
+});
+export type TabInfo = z.infer<typeof TabInfoSchema>;
+
+export const TabsRequestSchema = z.object({
+  type: z.literal("tabs.request"),
+  id: z.string(),
+  /** A tab title, origin, or id to switch to; null/absent just lists the open tabs. */
+  select: z.string().nullable().default(null),
+});
+export type TabsRequest = z.infer<typeof TabsRequestSchema>;
+
+export const TabsResponseSchema = z.object({
+  type: z.literal("tabs.response"),
+  id: z.string(),
+  tabs: z.array(TabInfoSchema),
+  /** Set when a `select` resolved to a whitelisted tab and the extension switched to it: the title
+   *  switched to, plus that tab's fresh read. */
+  switchedTo: z.string().optional(),
+  markdown: z.string().optional(),
+  refs: z.array(RefSchema).default([]),
+  hasPasswordField: z.boolean().default(false),
+  sentinel: SentinelSchema.optional(),
+});
+export type TabsResponse = z.infer<typeof TabsResponseSchema>;
+
 /** Any frame on the bridge, discriminated by `type`. */
 export const BridgeMessageSchema = z.discriminatedUnion("type", [
   AuthSchema,
@@ -111,5 +145,7 @@ export const BridgeMessageSchema = z.discriminatedUnion("type", [
   ReadResponseSchema,
   ActRequestSchema,
   ActResponseSchema,
+  TabsRequestSchema,
+  TabsResponseSchema,
 ]);
 export type BridgeMessage = z.infer<typeof BridgeMessageSchema>;

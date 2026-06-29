@@ -8,7 +8,6 @@
   "dependencies": {
     "@browsight/shared": "*",
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "diff": "^7.0.0",
     "ws": "^8.18.0",
     "zod": "^4.0.0"
   },
