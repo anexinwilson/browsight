@@ -40,6 +40,36 @@ export function withBrowsightServer(
   return { ...config, mcpServers: { ...existing, browsight: entry } };
 }
 
+/** Render a string as a TOML value. Literal (single-quoted) strings need no escaping, which keeps
+ *  Windows paths like C:\Users\... intact; fall back to a basic string only if a quote appears. */
+function tomlString(value: string): string {
+  return value.includes("'")
+    ? `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+    : `'${value}'`;
+}
+
+/** The Codex `[mcp_servers.browsight]` table for the given entry. */
+export function browsightCodexBlock(entry: McpEntry): string {
+  const args = entry.args.map(tomlString).join(", ");
+  return `[mcp_servers.browsight]\ncommand = ${tomlString(entry.command)}\nargs = [${args}]\n`;
+}
+
+/** Merge the browsight table into an existing config.toml (Codex's format), replacing a previous
+ *  [mcp_servers.browsight] table in place and otherwise appending — so every other setting and MCP
+ *  server in the file is preserved untouched. */
+export function withBrowsightCodex(existing: string, entry: McpEntry): string {
+  const block = browsightCodexBlock(entry);
+  const header = existing.match(/^\[mcp_servers\.browsight\][^\n]*$/m);
+  if (!header || header.index === undefined) {
+    const base = existing.trim();
+    return base ? `${base}\n\n${block}` : block;
+  }
+  const after = existing.slice(header.index + header[0].length);
+  const nextTable = after.search(/^\s*\[/m);
+  const tail = nextTable === -1 ? "" : after.slice(nextTable);
+  return `${existing.slice(0, header.index)}${block}${tail ? `\n${tail}` : ""}`;
+}
+
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SERVER_ENTRY = join(REPO_ROOT, "server", "dist", "index.mjs");
 const EXTENSION_DIST = join(REPO_ROOT, "extension", "dist");
@@ -52,8 +82,25 @@ function bridgeConfigPath(): string {
   return join(home(), ".browsight", "bridge.json");
 }
 
-function clientConfigPath(): string {
-  return join(home(), ".claude.json");
+/** JSON-config MCP clients to register browsight in. Claude Code is always set up; the others only
+ *  if the client looks installed (its home folder exists), so setup never creates configs for apps
+ *  that aren't there. Each entry is [id, configFile, installMarker]; Antigravity shares one config
+ *  across its IDE/CLI at ~/.gemini/config/mcp_config.json. Codex is handled separately (it is TOML). */
+function clientConfigPaths(): string[] {
+  const h = home();
+  const candidates: ReadonlyArray<readonly [string, string, string]> = [
+    ["claude", join(h, ".claude.json"), h],
+    ["cursor", join(h, ".cursor", "mcp.json"), join(h, ".cursor")],
+    ["windsurf", join(h, ".codeium", "windsurf", "mcp_config.json"), join(h, ".codeium")],
+    ["antigravity", join(h, ".gemini", "config", "mcp_config.json"), join(h, ".gemini")],
+  ];
+  return candidates
+    .filter(([id, p, marker]) => id === "claude" || existsSync(p) || existsSync(marker))
+    .map(([, p]) => p);
+}
+
+function codexConfigPath(): string {
+  return join(home(), ".codex", "config.toml");
 }
 
 function pickPort(preferred: number): Promise<number> {
@@ -97,10 +144,18 @@ async function runSetup(): Promise<void> {
 
   writeJson(bridgeConfigPath(), { port, token });
   writeJson(join(EXTENSION_DIST, "connection.json"), { port, token });
-  writeJson(
-    clientConfigPath(),
-    withBrowsightServer(readJson(clientConfigPath()), mcpServerEntry(SERVER_ENTRY)),
-  );
+  const entry = mcpServerEntry(SERVER_ENTRY);
+  for (const path of clientConfigPaths()) {
+    writeJson(path, withBrowsightServer(readJson(path), entry));
+  }
+  // Codex uses TOML, not JSON — register it only if it looks installed, merging into any existing
+  // config.toml so the user's other servers and settings are preserved.
+  const codexPath = codexConfigPath();
+  if (existsSync(codexPath) || existsSync(dirname(codexPath))) {
+    const current = existsSync(codexPath) ? readFileSync(codexPath, "utf8") : "";
+    mkdirSync(dirname(codexPath), { recursive: true });
+    writeFileSync(codexPath, withBrowsightCodex(current, entry));
+  }
 
   const lines = [
     "✓ browsight is configured.",
@@ -117,8 +172,14 @@ async function runSetup(): Promise<void> {
 }
 
 function runDoctor(): void {
-  const clientServers =
-    (readJson(clientConfigPath()).mcpServers as Record<string, unknown> | undefined) ?? {};
+  const codexPath = codexConfigPath();
+  const codexRegistered =
+    existsSync(codexPath) && /^\[mcp_servers\.browsight\]/m.test(readFileSync(codexPath, "utf8"));
+  const registered =
+    codexRegistered ||
+    clientConfigPaths().some(
+      (p) => "browsight" in ((readJson(p).mcpServers as Record<string, unknown> | undefined) ?? {}),
+    );
   const checks: ReadonlyArray<readonly [string, boolean]> = [
     ["server built (server/dist/index.mjs)", existsSync(SERVER_ENTRY)],
     [
@@ -127,7 +188,7 @@ function runDoctor(): void {
     ],
     ["bridge config written (~/.browsight/bridge.json)", existsSync(bridgeConfigPath())],
     ["extension connection.json written", existsSync(join(EXTENSION_DIST, "connection.json"))],
-    ["MCP server registered in client config", "browsight" in clientServers],
+    ["MCP server registered in a client config", registered],
   ];
   for (const [label, ok] of checks) {
     process.stdout.write(`${ok ? "✓" : "✗"} ${label}\n`);

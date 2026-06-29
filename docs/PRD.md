@@ -48,7 +48,7 @@ browsight addresses all three with one universal mechanism: the user's own authe
 
 ## 4. Client compatibility
 
-browsight is a standard MCP server over the stdio transport, so any MCP-compatible client can use it — Claude Code, Cursor, Windsurf, VS Code, Antigravity, etc. The server and extension are identical across clients; only the one-time registration step differs.
+browsight is a standard MCP server over the stdio transport, so any MCP-compatible client can use it — Claude Code, Cursor, Windsurf, VS Code, Codex, Antigravity, etc. The server and extension are identical across clients; only the one-time registration step differs.
 
 ---
 

@@ -4,7 +4,7 @@
 
 `MIT` · `TypeScript (strict)` · `Node 24` · `Manifest V3`
 
-browsight lets an AI agent (Claude Code, Cursor, Antigravity, …) read and act on any site you are **already signed into**, using your **real Chrome session**, through two small, deterministic, permissioned tools. One representation works on every page — there is no per-site code.
+browsight lets an AI agent (Claude Code, Cursor, Codex, Antigravity, …) read and act on any site you are **already signed into**, using your **real Chrome session**, through two small, deterministic, permissioned tools. One representation works on every page — there is no per-site code.
 
 It is three pieces: a **Manifest V3 Chrome extension** (the only part that touches the page), a **local MCP server** (what the agent talks to), and a **token-authenticated loopback WebSocket** between them.
 
@@ -66,7 +66,7 @@ The agent reads that, then acts by reference — `click #5`, `fill #6 with …`.
 - **Typed results** — every action returns a verdict (`navigated` / `dom_changed` / `value_set` / `no_change`) plus a diff of what changed.
 - **Capability-based permissions** — deny-by-default whitelist with read-only / full-control tiers and an optional timer, backed by Chrome's own host-permission system; policy lives in the extension, outside the model's reach.
 - **One-command setup** — `npm run setup` wires both sides (zero token copy-paste); `npm run doctor` checks the connection.
-- **Any MCP client** — Claude Code, Cursor, Windsurf, Antigravity, … (only the one-time registration differs).
+- **Any MCP client** — Claude Code, Cursor, Windsurf, Codex, Antigravity, … (only the one-time registration differs).
 
 ## Tech stack
 
