@@ -79,6 +79,13 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
     ws.on("close", () => {
       if (active === ws) {
         active = null;
+        // Fail any in-flight requests immediately rather than letting them wait out the full
+        // timeout — the MV3 service worker can be evicted mid-request.
+        for (const [id, p] of pending) {
+          clearTimeout(p.timer);
+          pending.delete(id);
+          p.reject(new Error("the browsight extension disconnected"));
+        }
       }
     });
   });

@@ -13,6 +13,12 @@ test("api keys and bearer tokens are masked", () => {
   assert.match(stripSecrets("Authorization: Bearer abc.def.ghi123"), /Bearer \[secret\]/);
 });
 
+test("more secret formats are masked", () => {
+  assert.match(stripSecrets("key sk_live_ABCDEFGHIJ1234567890 here"), /\[secret\]/);
+  assert.match(stripSecrets("aws AKIAIOSFODNN7EXAMPLE done"), /\[secret\]/);
+  assert.match(stripSecrets("token eyJhbGci.eyJzdWIi.SflKxwRJ end"), /\[secret\]/);
+});
+
 test("token estimate is far smaller for clean text than raw html", () => {
   const noise = '<div class="x" data-y="z">'.repeat(500);
   const raw = `${noise}Hello world`;

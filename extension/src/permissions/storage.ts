@@ -7,11 +7,25 @@ import type { Grant } from "./policy.ts";
 
 const STORAGE_KEY = "browsight.grants";
 
-/** Read the stored grants. */
+/**
+ * Read the stored grants, dropping any that have expired and releasing their Chrome host permission
+ * so an expired "1 hour" grant never leaves the extension holding access indefinitely.
+ */
 export async function listGrants(): Promise<Grant[]> {
   const data = await chrome.storage.local.get(STORAGE_KEY);
-  const grants = data[STORAGE_KEY];
-  return Array.isArray(grants) ? (grants as Grant[]) : [];
+  const stored = data[STORAGE_KEY];
+  const all = Array.isArray(stored) ? (stored as Grant[]) : [];
+  const now = Date.now();
+  const live = all.filter((g) => g.expiresAt === null || g.expiresAt > now);
+  if (live.length !== all.length) {
+    await saveGrants(live);
+    for (const g of all) {
+      if (g.expiresAt !== null && g.expiresAt <= now) {
+        await chrome.permissions.remove({ origins: [`${g.origin}/*`] });
+      }
+    }
+  }
+  return live;
 }
 
 /** Persist the grants. */

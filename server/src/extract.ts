@@ -6,17 +6,26 @@
 
 const PASSWORD_INPUT = /<input\b[^>]*\btype=["']password["'][^>]*>/gi;
 const VALUE_ATTR = /\bvalue=["'][^"']*["']/i;
-const API_KEY = /\b(?:sk|pk|rk)-[A-Za-z0-9]{12,}\b/g;
-const GITHUB_TOKEN = /\bgh[pousr]_[A-Za-z0-9]{16,}\b/g;
 const BEARER = /\bBearer\s+[A-Za-z0-9._-]+/gi;
+// Common secret shapes: Stripe/OpenAI-style keys (hyphen or underscore), GitHub tokens, AWS access
+// keys, Slack tokens, Google API keys, and JWTs.
+const KEY_PATTERNS = [
+  /\b(?:sk|pk|rk)[-_][A-Za-z0-9_]{12,}\b/g,
+  /\bgh[pousr]_[A-Za-z0-9]{16,}\b/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+  /\bAIza[0-9A-Za-z_-]{35}\b/g,
+  /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+];
 
-/** Strip password-field values and obvious key/token shapes so secrets never reach the model. */
+/** Strip password-field values and common key/token shapes so secrets never reach the model. */
 export function stripSecrets(input: string): string {
   let out = input;
   out = out.replace(PASSWORD_INPUT, (tag) => tag.replace(VALUE_ATTR, 'value="[stripped]"'));
-  out = out.replace(API_KEY, "[secret]");
-  out = out.replace(GITHUB_TOKEN, "[secret]");
   out = out.replace(BEARER, "Bearer [secret]");
+  for (const re of KEY_PATTERNS) {
+    out = out.replace(re, "[secret]");
+  }
   return out;
 }
 

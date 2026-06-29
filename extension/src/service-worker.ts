@@ -212,6 +212,18 @@ async function handleAct(msg: ActRequest): Promise<void> {
     const navigatedAway =
       /back\/forward cache|message channel closed|message port closed|Receiving end does not exist/i;
     if (navigatedAway.test(message)) {
+      // If the click drove the tab to an origin the user hasn't whitelisted, say so — a link click
+      // must not quietly move the agent somewhere it has no grant for.
+      const moved = await activeTab();
+      const newOrigin = moved?.url ? originOf(moved.url) : "";
+      if (newOrigin && newOrigin !== origin && !decideAccess(grants, newOrigin, now).read) {
+        sendActSentinel(
+          msg.id,
+          "not_whitelisted",
+          `the page navigated to ${newOrigin}, which is not whitelisted — allow it in the browsight popup to continue.`,
+        );
+        return;
+      }
       send({
         type: "act.response",
         id: msg.id,
