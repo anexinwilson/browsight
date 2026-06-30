@@ -76,7 +76,7 @@ class SnapshotBuilder {
   private flush(): void {
     const text = this.line
       .replace(/[ \t\n\r]+/g, " ")
-      .replace(/(?: \b\d\b ){7,}\b\d\b/g, "")
+      .replace(/(?: \b\d\b){8,}/g, "")
       .replace(/[ \t\n\r]+/g, " ")
       .trim();
     if (text) {

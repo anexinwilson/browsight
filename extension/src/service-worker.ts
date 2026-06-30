@@ -18,13 +18,16 @@ interface Connection {
 const ALLOWED_WS_HOSTS = ["127.0.0.1", "localhost"] as const;
 type AllowedWsHost = (typeof ALLOWED_WS_HOSTS)[number];
 
-let socket: WebSocket | null = null;
+export let socket: WebSocket | null = null;
+export function setSocket(s: WebSocket | null): void {
+  socket = s;
+}
 
 function send(msg: BridgeMessage): void {
   socket?.send(JSON.stringify(msg));
 }
 
-async function loadConnection(): Promise<Connection | null> {
+export async function loadConnection(): Promise<Connection | null> {
   try {
     const res = await fetch(chrome.runtime.getURL("connection.json"));
     const data = (await res.json()) as Partial<Connection>;
@@ -41,7 +44,7 @@ async function loadConnection(): Promise<Connection | null> {
   return null;
 }
 
-async function connect(): Promise<void> {
+export async function connect(): Promise<void> {
   if (socket && socket.readyState <= WebSocket.OPEN) {
     return;
   }
@@ -90,7 +93,7 @@ async function connect(): Promise<void> {
 }
 
 /** Parse one bridge frame and dispatch it to the handler for its request type. */
-async function route(raw: string): Promise<void> {
+export async function route(raw: string): Promise<void> {
   let msg: BridgeMessage;
   try {
     msg = BridgeMessageSchema.parse(JSON.parse(raw));
@@ -116,4 +119,4 @@ chrome.alarms.create("browsight-keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener(() => {
   void connect();
 });
-await connect();
+void connect();

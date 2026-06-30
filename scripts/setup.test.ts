@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,6 +10,7 @@ import {
   generateToken,
   mcpServerEntry,
   pickPort,
+  readJson,
   runDoctor,
   runSetup,
   tryPort,
@@ -205,6 +208,97 @@ test("runDoctor checks status of successful setup", async () => {
 
   // Assertions
   assert.match(stdoutOutput, /✓ bridge config written/);
+
+  // Clean up
+  rmSync(tempHome, { recursive: true, force: true });
+});
+
+test("pickPort secondary failure when both attempts reject", async () => {
+  const require = createRequire(import.meta.url);
+  const net = require("node:net");
+  const originalCreateServer = net.createServer;
+  net.createServer = () => {
+    const srv = originalCreateServer();
+    srv.listen = () => {
+      process.nextTick(() => {
+        srv.emit("error", new Error("mocked listen error"));
+      });
+      return srv;
+    };
+    return srv;
+  };
+  try {
+    const port = await pickPort(1234);
+    assert.equal(port, 1234);
+  } finally {
+    net.createServer = originalCreateServer;
+  }
+});
+
+test("readJson recovery from malformed JSON", () => {
+  const tempHome = createTempHome();
+  const tempFile = join(tempHome, "malformed.json");
+  writeFileSync(tempFile, "{invalid json}");
+  const res = readJson(tempFile);
+  assert.deepEqual(res, {});
+  rmSync(tempHome, { recursive: true, force: true });
+});
+
+test("tomlString escaped quotes coverage (single quotes path, double quotes arg)", () => {
+  // 1. Single quotes path (contains single quote, so wrapped in double quotes)
+  const block1 = browsightCodexBlock({
+    command: "C:\\path'with'quote",
+    args: [],
+  });
+  assert.match(block1, /command = "C:\\\\path'with'quote"/);
+
+  // 2. Double quotes arg (contains double quote, but NO single quote, so wrapped in single quotes)
+  const block2 = browsightCodexBlock({
+    command: "node",
+    args: ['"double-quoted-arg"', 'arg"with"double'],
+  });
+  assert.match(block2, /args = \['"double-quoted-arg"', 'arg"with"double'\]/);
+});
+
+test("CLI entry point integration - setup and doctor execution", async () => {
+  const tempHome = createTempHome();
+  const REPO_ROOT = join(import.meta.dirname, "..");
+
+  // 1. Run setup CLI
+  const childSetup = spawn(process.execPath, [join(REPO_ROOT, "scripts", "setup.ts")], {
+    env: {
+      ...process.env,
+      USERPROFILE: tempHome,
+      HOME: tempHome,
+      BROWSIGHT_HOME: tempHome,
+    },
+  });
+
+  const setupExit = await new Promise<number | null>((resolve) => {
+    childSetup.on("close", resolve);
+  });
+  assert.equal(setupExit, 0);
+
+  // 2. Run doctor CLI
+  const childDoctor = spawn(process.execPath, [join(REPO_ROOT, "scripts", "setup.ts"), "doctor"], {
+    env: {
+      ...process.env,
+      USERPROFILE: tempHome,
+      HOME: tempHome,
+      BROWSIGHT_HOME: tempHome,
+    },
+  });
+
+  let doctorStdout = "";
+  childDoctor.stdout.on("data", (chunk) => {
+    doctorStdout += chunk.toString();
+  });
+
+  const doctorExit = await new Promise<number | null>((resolve) => {
+    childDoctor.on("close", resolve);
+  });
+  assert.equal(doctorExit, 0);
+  assert.match(doctorStdout, /✓ bridge config written/);
 
   // Clean up
   rmSync(tempHome, { recursive: true, force: true });

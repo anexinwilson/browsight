@@ -157,6 +157,10 @@ const fetchMock = async (url: string) => {
 const wsInstances: MockWebSocket[] = [];
 
 class MockWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
   url: string;
   listeners: Record<string, ((...args: unknown[]) => unknown)[]> = {};
   readyState = 0; // CONNECTING
@@ -195,7 +199,7 @@ class MockWebSocket {
 (globalThis as any).WebSocket = MockWebSocket;
 
 // Import the service worker dynamically to initialize it under mocked globals
-await import("./service-worker.ts");
+const sw = await import("./service-worker.ts");
 
 test("service-worker initializes and authenticates over websocket", async () => {
   assert.ok(wsInstances.length > 0, "A WebSocket should have been created");
@@ -308,4 +312,164 @@ test("service-worker handles websocket closure, error, and alarm reconnects", as
     initialCount + 1,
     "A new WebSocket instance should have been created on alarm reconnect",
   );
+});
+
+test("Fetch failure in loadConnection()", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  try {
+    // Case A: Fetch throws
+    (globalThis as any).fetch = async () => {
+      throw new Error("Network error");
+    };
+    const res1 = await sw.loadConnection();
+    assert.strictEqual(res1, null);
+
+    // Case B: Fetch returns invalid JSON
+    (globalThis as any).fetch = async () => {
+      return {
+        json: async () => {
+          throw new Error("Invalid JSON");
+        },
+      };
+    };
+    const res2 = await sw.loadConnection();
+    assert.strictEqual(res2, null);
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
+});
+
+test("connect() duplicate socket", async () => {
+  const initialLength = wsInstances.length;
+  const mockActiveSocket = new MockWebSocket("ws://127.0.0.1:8137") as any;
+  mockActiveSocket.readyState = 1; // OPEN
+  sw.setSocket(mockActiveSocket);
+
+  try {
+    await sw.connect();
+    // Since it exits early, no new socket should be created
+    assert.strictEqual(wsInstances.length, initialLength + 1);
+  } finally {
+    sw.setSocket(null);
+  }
+});
+
+test("connect() empty connection", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  const initialLength = wsInstances.length;
+  sw.setSocket(null);
+  try {
+    (globalThis as any).fetch = async () => {
+      throw new Error("Fetch failed");
+    };
+    await sw.connect();
+    assert.strictEqual(wsInstances.length, initialLength);
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
+});
+
+test("connect() disallowed host", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  const initialLength = wsInstances.length;
+  sw.setSocket(null);
+  try {
+    (globalThis as any).fetch = async (url: string) => {
+      if (url.endsWith("connection.json")) {
+        return {
+          json: async () => ({
+            port: 8137,
+            token: "mock-token",
+            host: "example.com",
+          }),
+        };
+      }
+      throw new Error("Unexpected url");
+    };
+    await sw.connect();
+    assert.strictEqual(wsInstances.length, initialLength);
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
+});
+
+test("connect() invalid port", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  const initialLength = wsInstances.length;
+  sw.setSocket(null);
+  try {
+    (globalThis as any).fetch = async (url: string) => {
+      if (url.endsWith("connection.json")) {
+        return {
+          json: async () => ({
+            port: 99999,
+            token: "mock-token",
+            host: "127.0.0.1",
+          }),
+        };
+      }
+      throw new Error("Unexpected url");
+    };
+    await sw.connect();
+    assert.strictEqual(wsInstances.length, initialLength);
+
+    (globalThis as any).fetch = async (url: string) => {
+      if (url.endsWith("connection.json")) {
+        return {
+          json: async () => ({
+            port: "invalid-port",
+            token: "mock-token",
+            host: "127.0.0.1",
+          }),
+        };
+      }
+      throw new Error("Unexpected url");
+    };
+    await sw.connect();
+    assert.strictEqual(wsInstances.length, initialLength);
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
+});
+
+test("ws.message origin mismatch", async () => {
+  const ws = wsInstances[wsInstances.length - 1];
+  ws.sentMessages.length = 0;
+
+  ws.trigger("message", {
+    origin: "ws://evil.com",
+    data: JSON.stringify({
+      type: "read.request",
+      id: "mismatched-origin-id",
+    }),
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.strictEqual(ws.sentMessages.length, 0);
+});
+
+test("route() parse error", async () => {
+  await assert.doesNotReject(async () => {
+    await sw.route("invalid-json{");
+  });
+
+  await assert.doesNotReject(async () => {
+    await sw.route(JSON.stringify({ type: "unknown-type", id: "1" }));
+  });
+});
+
+test("extension runtime lifecycle", async () => {
+  const initialLength = wsInstances.length;
+  sw.setSocket(null);
+
+  assert.ok(onInstalledCallbacks.length > 0);
+  onInstalledCallbacks[0]();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.strictEqual(wsInstances.length, initialLength + 1);
+
+  sw.setSocket(null);
+  assert.ok(onStartupCallbacks.length > 0);
+  onStartupCallbacks[0]();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.strictEqual(wsInstances.length, initialLength + 2);
 });

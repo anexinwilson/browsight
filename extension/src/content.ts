@@ -41,9 +41,16 @@ if (!globalThis.__browsightInjected) {
       _sender,
       sendResponse: (response: ReadResult | ActResult) => void,
     ) => {
+      // biome-ignore lint/suspicious/noExplicitAny: used for test overrides
+      const activeBuildSnapshot = (globalThis as any).__mockBuildSnapshot || buildSnapshot;
+      // biome-ignore lint/suspicious/noExplicitAny: used for test overrides
+      const activeRememberSnapshot = (globalThis as any).__mockRememberSnapshot || rememberSnapshot;
+      // biome-ignore lint/suspicious/noExplicitAny: used for test overrides
+      const activePerformAct = (globalThis as any).__mockPerformAct || performAct;
+
       if (message.kind === "read") {
-        const snap = buildSnapshot(document);
-        rememberSnapshot(snap.refs, snap.elements);
+        const snap = activeBuildSnapshot(document);
+        activeRememberSnapshot(snap.refs, snap.elements);
         // Freshness marker: performance.timeOrigin is the page's load time — constant for one page
         // instance, and it changes on every reload/navigation. It reflects the PAGE load, not this
         // content script's re-injection (the same document keeps the same timeOrigin), so comparing
@@ -57,7 +64,7 @@ if (!globalThis.__browsightInjected) {
         return false;
       }
       if (message.kind === "act" && message.ref && message.action) {
-        void performAct(message.ref, message.action, message.value).then(sendResponse);
+        void activePerformAct(message.ref, message.action, message.value).then(sendResponse);
         return true;
       }
       return false;

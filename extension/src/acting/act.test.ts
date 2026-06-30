@@ -385,3 +385,113 @@ test("performAct executes various cases and validation paths", async () => {
   btn.remove();
   input.remove();
 });
+
+test("performAct with a select element calls fillSelect through tryPerformFill", async () => {
+  const select = document.createElement("select");
+  const opt = document.createElement("option");
+  opt.value = "v1";
+  opt.text = "txt1";
+  select.appendChild(opt);
+  document.body.appendChild(select);
+
+  rememberSnapshot([], new Map([[1, select]]));
+  const res = await performAct("1", "fill", "v1");
+  assert.strictEqual(select.value, "v1");
+  assert.strictEqual(res.verdict, "value_set");
+
+  select.remove();
+});
+
+test("performAct with a contenteditable element calls fillEditable through tryPerformFill", async () => {
+  const div = document.createElement("div");
+  div.setAttribute("contenteditable", "true");
+  Object.defineProperty(div, "isContentEditable", {
+    get() {
+      return true;
+    },
+    configurable: true,
+  });
+  document.body.appendChild(div);
+
+  rememberSnapshot([], new Map([[1, div]]));
+  const res = await performAct("1", "fill", "helloeditable");
+  assert.strictEqual(div.textContent, "helloeditable");
+  assert.strictEqual(res.verdict, "value_set");
+
+  div.remove();
+});
+
+test("performAct with value: undefined for fill ignores and covers tryPerformFill line 251-252", async () => {
+  const input = document.createElement("input");
+  input.type = "text";
+  document.body.appendChild(input);
+
+  rememberSnapshot([], new Map([[1, input]]));
+  const res = await performAct("1", "fill", undefined);
+  assert.strictEqual(res.verdict, "no_change");
+
+  input.remove();
+});
+
+test("performAct where viewport scroll result returns a DOM change (hits line 237-238)", async () => {
+  const root = document.scrollingElement || document.documentElement;
+  let currentScrollTop = 0;
+
+  Object.defineProperty(root, "scrollTop", {
+    get() {
+      return currentScrollTop;
+    },
+    set(v) {
+      currentScrollTop = v;
+    },
+    configurable: true,
+  });
+
+  const originalScrollBy = root.scrollBy;
+  const addedElements: HTMLElement[] = [];
+
+  root.scrollBy = (opt: any) => {
+    currentScrollTop += 100; // movedPx !== 0
+    const btn = document.createElement("button");
+    btn.id = "scroll-dom-change-btn";
+    btn.textContent = "Scroll DOM Change Button";
+    document.body.appendChild(btn);
+    addedElements.push(btn);
+  };
+
+  try {
+    const res = await performAct("", "scroll", "down");
+    assert.strictEqual(res.verdict, "dom_changed");
+    assert.strictEqual(res.sentinel, undefined);
+  } finally {
+    root.scrollBy = originalScrollBy;
+    for (const el of addedElements) {
+      el.remove();
+    }
+  }
+});
+
+test("fillValue fallback when prototype setter descriptor for 'value' is missing (hits line 28-29)", () => {
+  const input = document.createElement("input");
+  input.type = "text";
+  document.body.appendChild(input);
+
+  const originalDescriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+
+  try {
+    // Define a value property with no setter descriptor to trigger line 28-29
+    Object.defineProperty(HTMLInputElement.prototype, "value", {
+      value: "",
+      writable: true,
+      configurable: true,
+    });
+
+    fillValue(input, "fallback-value");
+    assert.strictEqual(input.value, "fallback-value");
+  } finally {
+    if (originalDescriptor) {
+      Object.defineProperty(HTMLInputElement.prototype, "value", originalDescriptor);
+    }
+    input.remove();
+  }
+});
