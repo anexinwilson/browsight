@@ -8,31 +8,15 @@
     "type": "git",
     "url": "git+https://github.com/anexinwilson/browsight.git"
   },
-  "keywords": [
-    "mcp",
-    "ai",
-    "llm",
-    "browser",
-    "automation"
-  ],
+  "keywords": ["mcp", "ai", "llm", "browser", "automation"],
   "bin": {
     "browsight": "./scripts/dist/setup.mjs"
   },
-  "files": [
-    "server/dist",
-    "extension/dist",
-    "shared/dist",
-    "scripts/dist"
-  ],
+  "files": ["server/dist", "extension/dist", "shared/dist", "scripts/dist"],
   "engines": {
     "node": ">=24"
   },
-  "workspaces": [
-    "shared",
-    "server",
-    "extension",
-    "scripts"
-  ],
+  "workspaces": ["shared", "server", "extension", "scripts"],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",

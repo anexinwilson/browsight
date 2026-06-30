@@ -104,7 +104,6 @@ function isNpxContext(): boolean {
   return p.includes("/_npx/") || p.includes("/.cache/node/");
 }
 
-
 /** Permanent home for the extension on the user's machine. */
 function extensionHome(): string {
   return join(home(), ".browsight", "extension");
