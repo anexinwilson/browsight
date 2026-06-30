@@ -112,3 +112,28 @@ Working directory: `c:\Users\aen\Music\browsight-mcp`
 `jsdom` is already installed. Use it to mock the DOM for these frontend files. You may also need to stub the global `chrome` object.
 You may run `npm run test` to verify your coverage.
 Report back when coverage for these 5 files is >= 80%. Do not git commit.
+
+## Follow-up — 2026-06-30T17:17:21Z
+
+# Teamwork Project Prompt — Draft
+
+> Status: Launched
+> Goal: Craft prompt → get user approval → delegate to teamwork_preview
+
+Audit the test suite for the `browsight` project to ensure the recent `npx` refactoring in `scripts/setup.ts` is fully covered, and fix any coverage gaps.
+
+Working directory: c:\Users\aen\Music\browsight-mcp
+
+## Requirements
+
+### R1. Audit `npx` test coverage
+The team must run coverage reports specifically targeting `scripts/setup.ts` to see if the new `npx` (and local path fallback) logic is actually being tested.
+
+### R2. Write missing tests
+Write new unit tests using `node:test` in `scripts/setup.test.ts` to cover any uncovered lines in the setup script, specifically the new `extensionHome` and path resolution logic.
+
+## Acceptance Criteria
+
+### Test Coverage
+- [ ] Running `npm run test -- --experimental-test-coverage` shows 100% coverage for `scripts/setup.ts`.
+- [ ] All 112+ tests pass successfully.

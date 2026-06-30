@@ -1,53 +1,73 @@
-# browsight
+<p align="center">
+  <img src="https://raw.githubusercontent.com/anexinwilson/browsight/main/docs/logo.png" alt="browsight logo" width="128">
+</p>
 
-> A universal, permissioned **read-and-act** tool that exposes your real, authenticated Chrome to any MCP client — at a few hundred tokens per page.
+<h1 align="center">browsight</h1>
 
-`MIT` · `TypeScript (strict)` · `Node 24` · `Manifest V3`
+<p align="center">
+  Give your AI agent eyes inside your real, logged-in Chrome.
+</p>
 
-browsight lets an AI agent (Claude Code, Cursor, Codex, Antigravity, …) read and act on any site you are **already signed into**, using your **real Chrome session**, through two small, deterministic, permissioned tools. One representation works on every page — there is no per-site code.
-
-It is three pieces: a **Manifest V3 Chrome extension** (the only part that touches the page), a **local MCP server** (what the agent talks to), and a **token-authenticated loopback WebSocket** between them.
-
-**Status:** working MVP — read + act + a whitelist permission gate, verified end to end on real logged-in pages.
+<p align="center">
+  <code>MIT</code> · <code>TypeScript</code> · <code>Node 24</code> · <code>Manifest V3</code>
+</p>
 
 ---
 
-## Why
+Most browser automation tools spin up a headless browser with no cookies, no saved logins, no history. browsight is different — it connects your AI agent directly to the Chrome tab you already have open.
 
-Most browser tooling for AI agents has three problems browsight fixes:
+It works as a Chrome extension paired with a tiny local server. The extension reads the page, the server talks to your MCP client (Claude, Cursor, Codex, etc.), and the agent can click buttons, fill forms, navigate pages, and switch tabs — all inside your actual session.
 
-- **Authentication** — they launch a fresh, signed-out browser. browsight uses your real, logged-in profile.
-- **Token cost** — they send screenshots or raw DOM (tens of thousands of tokens). browsight sends a clean *semantic snapshot* (a few hundred tokens).
-- **Safety** — they rarely have a real permission boundary. browsight enforces a deterministic, capability-based gate inside the extension.
+No new browser window. No logging in again. No screenshots.
 
-It complements your agent's built-in web search (it targets the authenticated, interactive web those tools cannot reach) — it does not replace public-web search.
+---
 
-## How it works
+## Quick start
 
-```
-AI agent (Claude Code, Antigravity)
-   │  MCP over stdio
-   ▼
-browsight server (Node)            ← the two tools; secret-stripping; diffing
-   │  loopback WebSocket on 127.0.0.1 + per-install token
-   ▼
-browsight extension (Manifest V3)  ← runs in YOUR Chrome; the only thing that touches the page
-   │  builds the semantic snapshot; enforces the permission gate
-   ▼
-the live, logged-in page
+Requires **Node 24+**.
+
+```bash
+npx -y browsight setup
 ```
 
-Since Chrome 136 disabled remote-debugging on the default profile, an in-browser extension is the only way to reach authenticated tabs — that is why browsight is an extension, not CDP.
+That one command does everything: generates a secure token, copies the extension to your machine, and registers the MCP server with your AI client automatically.
 
-## The three tools
+**Then load the extension into Chrome (one time):**
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode** (top-right toggle)
+3. Click **Load unpacked**
+4. Select `~/.browsight/extension`
+
+Restart your MCP client (Claude Desktop, Cursor, etc.) and you are done.
+
+**Allow a site:** click the browsight icon in your toolbar, pick **read-only** or **full control**, and click **Grant access**. Do this once per site — the agent remembers it.
+
+**Check everything is working:**
+
+```bash
+npx browsight doctor
+```
+
+---
+
+## What the agent can do
 
 ```
-browser_read  { url? }                  → the current tab as clean markdown + numbered references
-browser_act   { ref, action, value? }   → one action (click/fill/navigate/scroll) + verdict + diff
-browser_tabs  { select? }               → list the open tabs, or switch to a whitelisted one and read it
+browser_read   { url? }                → current page as compact markdown + numbered element refs
+browser_act    { ref, action, value? } → click / fill / navigate / scroll
+browser_tabs   { select? }             → list open tabs, or switch to one and read it
 ```
 
-A read looks like this:
+A typical Gmail inbox comes out to about 300 tokens. A LinkedIn job listing is around 400. The agent can read, act, and navigate without you manually copying anything.
+
+---
+
+## How it reads a page
+
+The extension runs a content script that walks the live DOM using the browser's own accessibility tree — the same signal a screen reader uses. Every element gets its ARIA role and accessible name. Hidden elements, scripts, styles, and footers are skipped.
+
+A Gmail inbox looks like this to the agent:
 
 ```
 # Inbox — 3 unread
@@ -57,92 +77,81 @@ Receipt from Stripe arrived today.
 - [link "Stripe receipt" #7]
 ```
 
-The agent reads that, then acts by reference — `click #5`, `fill #6 with …`.
+When the agent acts on `#5`, the extension looks it up by role + accessible name — not a brittle CSS selector. References survive re-renders. Every action returns a diff of what changed so the agent knows what happened without reading the page again.
 
-## Features
+---
 
-- **Universal semantic snapshot** — any page → clean markdown + stable references, built in-page from the accessibility tree (role + accessible name).
-- **Token-lean** — a few hundred tokens for a typical page; no screenshots by default.
-- **Self-healing references** — re-resolved at act time from a durable recipe (role + name + `data-*` + text); never hashed CSS classes; returns ranked candidates when ambiguous instead of guessing.
-- **Typed results** — every action returns a verdict (`navigated` / `dom_changed` / `value_set` / `no_change`) plus a diff of what changed.
-- **Capability-based permissions** — deny-by-default whitelist with read-only / full-control tiers and an optional timer, backed by Chrome's own host-permission system; policy lives in the extension, outside the model's reach.
-- **Multi-tab, still gated** — `browser_tabs` lists the open tabs and switches between them, but can only switch to and read sites you have whitelisted; non-allowed tabs are surfaced by origin (never full URL) so the agent can ask you to allow them.
-- **One-command setup** — `npm run setup` wires both sides (zero token copy-paste); `npm run doctor` checks the connection.
-- **Any MCP client** — Claude Code, Cursor, Windsurf, Codex, Antigravity, … (only the one-time registration differs).
-
-## Tech stack
-
-- **TypeScript** (strict) on **Node 24**, ESM, an npm-workspaces monorepo
-- **MCP:** `@modelcontextprotocol/sdk` (stdio) · **Transport:** `ws` + a per-install token
-- **Extension:** Manifest V3 (service worker + content script + popup/options)
-- **Perception:** `dom-accessibility-api` · **Validation:** zod v4 (one shared, typed protocol)
-- **Diff:** a structural reference diff computed in-extension (no library) · **Build:** tsdown (server) + esbuild (extension) · **Lint/format:** Biome · **Tests:** `node --test`
-
-## Install & try it
-
-Requires **Node 24 (LTS)**. From the repo root:
+## Architecture
 
 ```
+AI agent (Claude, Cursor, Codex…)
+   │  MCP over stdio
+   ▼
+browsight server  (Node.js, local)
+   │  WebSocket · 127.0.0.1 only · per-install auth token
+   ▼
+browsight extension  (Manifest V3 · service worker + content script)
+   │  permission-gated · runs inside YOUR Chrome
+   ▼
+your real browser tab
+```
+
+The extension is the only part that ever touches a page. The server routes messages and strips secrets (passwords, API keys) from snapshots before they reach the model. The WebSocket only binds to loopback — nothing is exposed on your network.
+
+---
+
+## Permissions
+
+Sites are **denied by default**. You grant access per-site through the extension popup. The whitelist lives in `chrome.storage.local` and can only be written by you through the popup UI after a Chrome-native permission prompt.
+
+No MCP message can grant or escalate access. The agent cannot read or modify the whitelist. Non-whitelisted tabs appear in `browser_tabs` by origin only, so the agent can ask you to allow them — it never silently fails or reads something you did not approve.
+
+---
+
+## Why not CDP or Playwright?
+
+Chrome 136 disabled remote debugging on the default profile. Playwright and CDP now require launching a separate browser process — which means no cookies, no saved logins, no extensions. An in-browser Manifest V3 extension is currently the only reliable way to reach your real, authenticated tabs without any of that.
+
+---
+
+## Caveats
+
+- **Cross-origin iframes** cannot be read — they appear as `[unreadable frame (cross-origin)]` so the gap is always visible to the agent
+- **Same-origin iframes** and open shadow roots are fully traversed
+- **Synthetic events** have `isTrusted: false` — a small number of hardened inputs detect this
+- Token count varies — content-heavy pages compress significantly more than dense app UIs
+
+---
+
+## Contributing
+
+```bash
+git clone https://github.com/anexinwilson/browsight
+cd browsight
 npm install
-npm run build      # compiles the server + the extension
-npm run setup      # wires both sides, registers the MCP server, prints the next step
+npm run build       # tsdown (server) + esbuild (extension)
+npm test            # 112 unit tests
+npm run lint        # Biome
 ```
 
-Load the extension (one time):
+After editing the extension, run `npm run build` and click the **reload icon** on the extension card in `chrome://extensions`.
 
-1. Open `chrome://extensions` → enable **Developer mode**
-2. Click **Load unpacked** → select `extension/dist`
-3. Restart your MCP client
+CI runs on every push: typecheck, lint, tests, SonarCloud static analysis, and Snyk dependency scan.
 
-Allow a site: click the **browsight** toolbar icon on a logged-in page → pick a tier → **Grant access**.
+---
 
-## Usage
+## Stack
 
-You do not use the extension directly — you talk to your agent. Ask in plain English:
+- **TypeScript** strict · Node 24 · ESM · npm workspaces
+- **Perception:** `dom-accessibility-api` for ARIA role + accessible name resolution
+- **Protocol:** zod v4 schema shared between extension and server
+- **Transport:** `ws` WebSocket · loopback only · per-install token auth
+- **MCP:** `@modelcontextprotocol/sdk` (stdio)
+- **Build:** tsdown (server) · esbuild (extension)
+- **Quality:** Biome · `node:test` · SonarCloud · Snyk
 
-> "read this page" · "summarize my GitHub notifications" · "click the Sort button" · "fill the search box with bookmarking"
-
-The agent calls `browser_read` / `browser_act` behind the scenes. Run `npm run doctor` to check the connection.
-
-## Security model
-
-Capability = (site × action), deny-by-default, revocable. The agent **requests**; the extension — the only component that can reach the page — **decides and executes**. The whitelist is stored in `chrome.storage.local` and is **written only by the popup/options UI, after a Chrome-native host-permission prompt you approve** — the model can neither read nor edit it, and no protocol message grants access, so no connected client can escalate its own privileges. Every read, act, navigation, and tab switch is gated by one tested decision (`decideAccess`); the origin checked comes from the real tab, not from anything the agent sends.
-
-Honest framing: the whitelist is **per-site, not per-client** (all connected clients share it, so allow only what you would let any agent do), and this is **blast-radius containment**, not a claim to prevent prompt injection. Details and decision records are in [docs/DESIGN.md](docs/DESIGN.md).
-
-## Project structure
-
-```
-browsight/
-├─ extension/    Manifest V3 extension (the only component touching the DOM)
-├─ server/       MCP server, bridge, post-processing, tests
-├─ shared/       protocol.ts — one zod-validated contract
-├─ scripts/      setup.ts — one-command bootstrap + doctor
-└─ docs/         DESIGN.md, PRD.md — technical design + product spec
-```
-
-## Development
-
-```
-npm run typecheck
-npm test           # node --test (unit + a bridge integration test)
-npm run lint       # Biome
-npm run build
-```
-
-Product spec: [PRD.md](docs/PRD.md). Technical design + decision records: [docs/DESIGN.md](docs/DESIGN.md). Deferred work: [ROADMAP.md](docs/ROADMAP.md).
-
-## Roadmap (high level)
-
-The full permission layer (per-action confirmation, provenance tripwire, audit log), advanced reads (schema extraction, virtualization-aware reads), the DevOps + security CI pass, and npm / store distribution. See [ROADMAP.md](docs/ROADMAP.md).
-
-## Honest caveats
-
-- Token reductions vary by page; application-shaped pages cost more than content pages.
-- Synthetic input is `isTrusted:false`; a few hardened controls need more (deferred).
-- Content inside **open** shadow roots and **same-origin** iframes is read; cross-origin frames can't be reached from the page and are marked `[unreadable frame (cross-origin)]` so the gap is visible rather than silent.
-- This is an **MVP** — read + act + a whitelist gate. The richer controls are on the roadmap.
+---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT

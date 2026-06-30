@@ -1,6 +1,6 @@
 {
   "name": "browsight",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "A universal, permissioned read-and-act tool that exposes your real, authenticated Chrome to any MCP client.",
   "license": "MIT",
@@ -8,15 +8,31 @@
     "type": "git",
     "url": "git+https://github.com/anexinwilson/browsight.git"
   },
-  "keywords": ["mcp", "ai", "llm", "browser", "automation"],
+  "keywords": [
+    "mcp",
+    "ai",
+    "llm",
+    "browser",
+    "automation"
+  ],
   "bin": {
-    "browsight": "./scripts/setup.ts"
+    "browsight": "./scripts/dist/setup.mjs"
   },
-  "files": ["server/dist", "extension/dist", "shared/dist", "scripts"],
+  "files": [
+    "server/dist",
+    "extension/dist",
+    "shared/dist",
+    "scripts/dist"
+  ],
   "engines": {
     "node": ">=24"
   },
-  "workspaces": ["shared", "server", "extension", "scripts"],
+  "workspaces": [
+    "shared",
+    "server",
+    "extension",
+    "scripts"
+  ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
@@ -25,7 +41,8 @@
     "test": "node --test \"**/*.test.ts\"",
     "setup": "node scripts/setup.ts",
     "doctor": "node scripts/setup.ts doctor",
-    "prepare": "husky"
+    "prepare": "husky",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
@@ -34,6 +51,7 @@
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
     "lint-staged": "^15.2.11",
+    "sharp": "^0.35.2",
     "tsdown": "^0.22.3",
     "typescript": "^5.7.0"
   },

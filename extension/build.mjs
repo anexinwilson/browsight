@@ -1,7 +1,7 @@
 // Bundles the extension with esbuild: the service worker as an ESM module and the content script
 // as a self-contained IIFE (so its npm deps are inlined for on-demand injection). esbuild is used
 // here rather than the server's tsdown because it bundles multi-surface IIFE output reliably.
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, cp, mkdir } from "node:fs/promises";
 import { build } from "esbuild";
 
 const outdir = "dist";
@@ -26,5 +26,6 @@ await build({
 await copyFile("src/manifest.json", `${outdir}/manifest.json`);
 await copyFile("src/popup.html", `${outdir}/popup.html`);
 await copyFile("src/options.html", `${outdir}/options.html`);
+await cp("src/icons", `${outdir}/icons`, { recursive: true });
 
 console.log("extension built to ./dist");

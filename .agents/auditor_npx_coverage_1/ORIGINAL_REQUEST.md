@@ -1,0 +1,2 @@
+## 2026-06-30T23:29:33Z
+You are a Forensic Auditor. Perform a thorough integrity verification on the browsight project's test suite and setup script changes. Verify that there is no cheating (such as hardcoded test outcomes, dummy or facade implementations, or bypasses of the test runner/coverage). Verify that the actual code of scripts/setup.ts is not bypassed. Write your audit report to c:\Users\aen\Music\browsight-mcp\.agents\auditor_npx_coverage_1\audit.md and notify the orchestrator (conversation ID: c03740ed-ce65-4243-88ac-f5adb2690eb6) via send_message.

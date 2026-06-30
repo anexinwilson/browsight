@@ -11,7 +11,7 @@
  * Paths are rooted at $BROWSIGHT_HOME (defaults to the home directory) so the flow is testable.
  */
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -30,6 +30,12 @@ export function generateToken(): string {
 /** The MCP server entry that points the client at the built server. */
 export function mcpServerEntry(serverEntryPath: string): McpEntry {
   return { command: process.execPath, args: [serverEntryPath] };
+}
+
+/** The MCP entry to write when running via npx — always re-fetches from the registry so the
+ *  server is never tied to a temp cache path. */
+export function mcpNpxEntry(): McpEntry {
+  return { command: "npx", args: ["-y", "browsight"] };
 }
 
 /** Merge the browsight entry into a client config object without disturbing other servers. */
@@ -75,12 +81,33 @@ export function withBrowsightCodex(existing: string, entry: McpEntry): string {
   return `${existing.slice(0, header.index)}${block}${tailStr}`;
 }
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SERVER_ENTRY = join(REPO_ROOT, "server", "dist", "index.mjs");
-const EXTENSION_DIST = join(REPO_ROOT, "extension", "dist");
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+// When running source directly (node scripts/setup.ts): SCRIPT_DIR ends in /scripts
+// When compiled by tsdown (scripts/dist/setup.mjs):     SCRIPT_DIR ends in /scripts/dist
+// Detect which so PKG_ROOT always resolves to the package root correctly.
+const isCompiled = /[/\\]dist$/.test(SCRIPT_DIR);
+const PKG_ROOT = isCompiled ? resolve(SCRIPT_DIR, "..", "..") : resolve(SCRIPT_DIR, "..");
+
+const SERVER_ENTRY = join(PKG_ROOT, "server", "dist", "index.mjs");
+const EXTENSION_DIST_SRC = join(PKG_ROOT, "extension", "dist");
 
 function home(): string {
   return process.env.BROWSIGHT_HOME ?? homedir();
+}
+
+/** True when running via `npx browsight` — the package is installed into the npm cache (_npx
+ *  directory), not a permanent location, so we must copy the extension to ~/.browsight and use
+ *  the npx command form in client configs rather than an absolute path to the cache. */
+function isNpxContext(): boolean {
+  // npx installs packages under a path containing _npx. A local repo clone never has this.
+  const p = SCRIPT_DIR.replace(/\\/g, "/");
+  return p.includes("/_npx/") || p.includes("/.cache/node/");
+}
+
+
+/** Permanent home for the extension on the user's machine. */
+function extensionHome(): string {
+  return join(home(), ".browsight", "extension");
 }
 
 function bridgeConfigPath(): string {
@@ -150,17 +177,30 @@ export function readJson(path: string): Record<string, unknown> {
 }
 
 export async function runSetup(): Promise<void> {
+  const npx = isNpxContext();
+
   // Reuse the existing token + port if setup has run before, so re-running never moves the port out
   // from under a server that is already using it (the cause of ERR_CONNECTION_REFUSED on re-setup).
   const existing = readJson(bridgeConfigPath());
   const token = typeof existing.token === "string" ? existing.token : generateToken();
   const port = typeof existing.port === "number" ? existing.port : await pickPort(8137);
-
   const host = typeof existing.host === "string" ? existing.host : "127.0.0.1";
 
   writeJson(bridgeConfigPath(), { host, port, token });
-  writeJson(join(EXTENSION_DIST, "connection.json"), { host, port, token });
-  const entry = mcpServerEntry(SERVER_ENTRY);
+
+  // Always copy the bundled extension to a permanent ~/.browsight/extension/ folder
+  // so Chrome can load it from a single stable path.
+  const extensionDistPath = extensionHome();
+  mkdirSync(extensionDistPath, { recursive: true });
+  if (existsSync(EXTENSION_DIST_SRC)) {
+    cpSync(EXTENSION_DIST_SRC, extensionDistPath, { recursive: true });
+  }
+
+  writeJson(join(extensionDistPath, "connection.json"), { host, port, token });
+
+  // Write the correct MCP entry for this context.
+  const entry = npx ? mcpNpxEntry() : mcpServerEntry(SERVER_ENTRY);
+
   for (const path of clientConfigPaths()) {
     writeJson(path, withBrowsightServer(readJson(path), entry));
   }
@@ -175,15 +215,14 @@ export async function runSetup(): Promise<void> {
 
   const lines = [
     "✓ browsight is configured.",
-    existsSync(SERVER_ENTRY) ? "" : "⚠ server not built yet — run `npm run build` first.",
     "",
     "Load the extension into Chrome (one time):",
     "  1. open chrome://extensions",
     "  2. enable Developer mode (top-right)",
-    `  3. click "Load unpacked" and select:  ${EXTENSION_DIST}`,
+    `  3. click "Load unpacked" and select:  ${extensionDistPath}`,
     "",
-    "Then restart your MCP client. Check the connection any time with `npm run doctor`.",
-  ].filter((l) => l !== "");
+    "Then restart your MCP client. Check the connection any time with `npx browsight doctor`.",
+  ];
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
@@ -200,10 +239,15 @@ export function runDoctor(): void {
     ["server built (server/dist/index.mjs)", existsSync(SERVER_ENTRY)],
     [
       "extension built (extension/dist/manifest.json)",
-      existsSync(join(EXTENSION_DIST, "manifest.json")),
+      existsSync(join(EXTENSION_DIST_SRC, "manifest.json")) ||
+        existsSync(join(extensionHome(), "manifest.json")),
     ],
     ["bridge config written (~/.browsight/bridge.json)", existsSync(bridgeConfigPath())],
-    ["extension connection.json written", existsSync(join(EXTENSION_DIST, "connection.json"))],
+    [
+      "extension connection.json written",
+      existsSync(join(EXTENSION_DIST_SRC, "connection.json")) ||
+        existsSync(join(extensionHome(), "connection.json")),
+    ],
     ["MCP server registered in a client config", registered],
   ];
   for (const [label, ok] of checks) {
