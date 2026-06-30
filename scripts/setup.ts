@@ -260,7 +260,16 @@ export function runDoctor(): void {
   );
 }
 
-const isMain = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+import { realpathSync } from "node:fs";
+
+let isMain = false;
+if (process.argv[1]) {
+  try {
+    isMain = realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    // Ignore symlink resolution errors
+  }
+}
 if (isMain) {
   const isDoctor = process.argv.slice(2).includes("doctor");
   if (isDoctor) {

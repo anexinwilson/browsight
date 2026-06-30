@@ -1,6 +1,6 @@
 {
   "name": "browsight",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "type": "module",
   "description": "A universal, permissioned read-and-act tool that exposes your real, authenticated Chrome to any MCP client.",
   "license": "MIT",
@@ -26,7 +26,8 @@
     "setup": "node scripts/setup.ts",
     "doctor": "node scripts/setup.ts doctor",
     "prepare": "husky",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "postinstall": "node -e \"console.log('\\n\\x1b[36m=========================================\\n\\x1b[32m ✓ browsight installed successfully!\\n\\x1b[0m\\n To finish configuration and load the\\n Chrome extension, please run:\\n\\n   \\x1b[1m\\x1b[33mnpx browsight setup\\x1b[0m\\n\\x1b[36m=========================================\\n')\""
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
@@ -44,5 +45,8 @@
   },
   "overrides": {
     "fast-uri": "^4.0.1"
+  },
+  "dependencies": {
+    "browsight": "^0.1.2"
   }
 }
