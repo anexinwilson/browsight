@@ -45,6 +45,17 @@ Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
 // Import the module under test
 import { buildSnapshot } from "./snapshot.ts";
 
+test("large snapshots are capped with an explicit truncation marker", () => {
+  document.body.innerHTML = Array.from(
+    { length: 1200 },
+    (_, index) => `<a href="/item-${index}">Unique result ${index} ${"x".repeat(30)}</a>`,
+  ).join("");
+  const snapshot = buildSnapshot(document);
+  assert.ok(snapshot.markdown.length < 25_000);
+  assert.match(snapshot.markdown, /snapshot truncated/);
+  assert.ok(snapshot.refs.length < 1200);
+});
+
 function clearDOM() {
   document.title = "";
   document.body.innerHTML = "";
@@ -61,6 +72,83 @@ test("Document Title: test buildSnapshot() with title present vs absent", () => 
   const snap2 = buildSnapshot(document);
   assert.ok(!snap2.markdown.includes("#"));
   assert.strictEqual(snap2.markdown, "Hello");
+});
+
+test("main mode focuses the largest primary landmark and keeps actionable references", () => {
+  clearDOM();
+  document.title = "Mail";
+  document.body.innerHTML = `
+    <nav>${"Navigation ".repeat(30)}<button>Settings</button></nav>
+    <main><h1>Inbox</h1><p>Important message content</p><button>Reply</button></main>
+    <aside>${"Advertisement ".repeat(40)}</aside>
+  `;
+
+  const snapshot = buildSnapshot(document, { mode: "main" });
+
+  assert.match(snapshot.markdown, /focused on primary content/);
+  assert.match(snapshot.markdown, /Important message content/);
+  assert.match(snapshot.markdown, /\[button "Reply" #1\]/);
+  assert.doesNotMatch(snapshot.markdown, /Settings|Advertisement/);
+  assert.equal(snapshot.refs.length, 1);
+});
+
+test("main mode explicitly falls back when a page has no primary landmark", () => {
+  clearDOM();
+  document.body.innerHTML = "<section><p>Useful page content</p></section>";
+
+  const snapshot = buildSnapshot(document, { mode: "main" });
+
+  assert.match(snapshot.markdown, /no primary landmark; showing full page/);
+  assert.match(snapshot.markdown, /Useful page content/);
+});
+
+test("an active dialog takes priority over background page noise", () => {
+  clearDOM();
+  document.body.innerHTML = `
+    <main>${"Background inbox row ".repeat(200)}<button>Background action</button></main>
+    <section role="dialog" aria-modal="true" aria-label="Compose">
+      <input aria-label="Recipients">
+      <button>Send</button>
+    </section>
+  `;
+
+  const snapshot = buildSnapshot(document);
+
+  assert.match(snapshot.markdown, /focused on active dialog/);
+  assert.match(snapshot.markdown, /\[textbox "Recipients" #1\]/);
+  assert.match(snapshot.markdown, /\[button "Send" #2\]/);
+  assert.doesNotMatch(snapshot.markdown, /Background inbox row|Background action/);
+});
+
+test("a non-modal dialog landmark does not hide the rest of the page", () => {
+  clearDOM();
+  document.body.innerHTML = `
+    <header><input aria-label="Search"></header>
+    <aside role="dialog"><a href="/filter">Last 30 days</a></aside>
+    <main><h1>Results</h1><a href="/book">A new science fiction book</a></main>
+  `;
+
+  const snapshot = buildSnapshot(document);
+
+  assert.doesNotMatch(snapshot.markdown, /focused on active dialog/);
+  assert.match(snapshot.markdown, /\[textbox "Search" #1\]/);
+  assert.match(snapshot.markdown, /A new science fiction book/);
+});
+
+test("the focused dialog wins when several compose windows are open", () => {
+  clearDOM();
+  document.body.innerHTML = `
+    <section role="dialog"><input aria-label="First recipient"></section>
+    <section role="dialog"><input aria-label="Second recipient"></section>
+  `;
+  const first = document.querySelector("input[aria-label='First recipient']") as HTMLInputElement;
+  first.focus();
+
+  const snapshot = buildSnapshot(document);
+
+  assert.match(snapshot.markdown, /focused on active dialog/);
+  assert.match(snapshot.markdown, /First recipient/);
+  assert.doesNotMatch(snapshot.markdown, /Second recipient/);
 });
 
 test("Text Normalization: verify whitespace collapsing and digit-sequence pagination stripping", () => {

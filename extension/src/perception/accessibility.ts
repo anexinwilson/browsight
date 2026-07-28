@@ -8,10 +8,19 @@ import { computeAccessibleName, getRole } from "dom-accessibility-api";
 /** Strip leaked HTML tags and normalize whitespace. Accessible names/labels must be plain text —
  *  some sites put markup in alt/aria-label, which would otherwise surface as `<img …>` in a name. */
 function stripMarkup(value: string): string {
-  return value
-    .replace(/<[^>]*>/g, " ")
-    .replace(/[ \t\n\r]+/g, " ")
-    .trim();
+  let plainText = "";
+  let insideTag = false;
+  for (const character of value) {
+    if (character === "<") {
+      insideTag = true;
+      plainText += " ";
+    } else if (character === ">" && insideTag) {
+      insideTag = false;
+    } else if (!insideTag) {
+      plainText += character;
+    }
+  }
+  return plainText.replace(/[ \t\n\r]+/g, " ").trim();
 }
 
 /** The element's ARIA role (explicit or implicit), or "" if it cannot be resolved. */
@@ -55,16 +64,18 @@ export function elementState(el: Element): string {
       parts.push(`${attr}=${value}`);
     }
   }
-  if (el instanceof HTMLInputElement) {
-    if (el.type === "checkbox" || el.type === "radio") {
-      parts.push(`checked=${el.checked}`);
-    } else if (el.type !== "password") {
-      parts.push(el.value ? "filled" : "empty");
+  const tag = el.tagName.toLowerCase();
+  if (tag === "input") {
+    const input = el as HTMLInputElement;
+    if (input.type === "checkbox" || input.type === "radio") {
+      parts.push(`checked=${input.checked}`);
+    } else if (input.type !== "password") {
+      parts.push(input.value ? "filled" : "empty");
     }
-  } else if (el instanceof HTMLTextAreaElement) {
-    parts.push(el.value ? "filled" : "empty");
-  } else if (el instanceof HTMLSelectElement) {
-    parts.push(`selected=${el.selectedIndex}`);
+  } else if (tag === "textarea") {
+    parts.push((el as HTMLTextAreaElement).value ? "filled" : "empty");
+  } else if (tag === "select") {
+    parts.push(`selected=${(el as HTMLSelectElement).selectedIndex}`);
   }
   return parts.join(" ");
 }

@@ -17,17 +17,20 @@
     "node": ">=24"
   },
   "workspaces": ["shared", "server", "extension", "scripts"],
+  "overrides": {
+    "@hono/node-server": "^2.0.11",
+    "ip-address": "^10.2.1"
+  },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "node --test \"**/*.test.ts\"",
+    "hooks": "husky",
     "setup": "node scripts/setup.ts",
     "doctor": "node scripts/setup.ts doctor",
-    "prepare": "husky",
-    "prepublishOnly": "npm run build",
-    "postinstall": "node -e \"console.log('\\n\\x1b[36m=========================================\\n\\x1b[32m ✓ browsight installed successfully!\\n\\x1b[0m\\n To finish configuration and load the\\n Chrome extension, please run:\\n\\n   \\x1b[1m\\x1b[33mnpx browsight setup\\x1b[0m\\n\\x1b[36m=========================================\\n')\""
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
@@ -42,11 +45,5 @@
   },
   "lint-staged": {
     "*.{ts,js,json,md}": "biome check --write"
-  },
-  "overrides": {
-    "fast-uri": "^4.0.1"
-  },
-  "dependencies": {
-    "browsight": "^0.1.2"
   }
 }

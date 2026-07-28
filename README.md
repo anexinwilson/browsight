@@ -5,152 +5,212 @@
 <h1 align="center">browsight</h1>
 
 <p align="center">
-  Give your AI agent eyes inside your real, logged-in Chrome.
+  Your logged-in Chrome, available to any MCP client.
 </p>
 
 <p align="center">
-  <code>MIT</code> · <code>TypeScript</code> · <code>Node 24</code> · <code>Manifest V3</code>
+  <code>MIT</code> · <code>TypeScript</code> · <code>Node 24</code> · <code>Chrome MV3</code>
 </p>
 
----
+Browser agents are far less useful when they open an empty profile and ask you to sign in everywhere again. Browsight connects an MCP client to a Chrome tab that is already open on your computer.
 
-Most browser automation tools spin up a headless browser with no cookies, no saved logins, no history. browsight is different — it connects your AI agent directly to the Chrome tab you already have open.
+That means an agent can work with the same Gmail inbox, LinkedIn page, admin dashboard, or documentation site that you can see, without asking you to sign in again or launching another browser window.
 
-It works as a Chrome extension paired with a tiny local server. The extension reads the page, the server talks to your MCP client (Claude, Cursor, Codex, etc.), and the agent can click buttons, fill forms, navigate pages, and switch tabs — all inside your actual session.
+Browsight is a local Node.js server paired with a Chrome extension. The extension reads approved pages and performs approved actions. The server exposes those capabilities as three small MCP tools.
 
-No new browser window. No logging in again. No screenshots.
+### Why try it?
 
----
+- **Use the session you already have.** Work with approved sites where you are already signed in.
+- **Give the model useful context.** Pages become compact text with named controls, not screenshots or raw HTML.
+- **Keep access visible.** Every site starts blocked, and only the extension UI can grant read or control access.
+- **Bring your own MCP client.** The protocol is not tied to one model provider or chat application.
 
-## Quick start
+## Try it locally
 
-Requires **Node 24+**.
+Browsight requires Node.js 24 or later.
 
-```bash
+```sh
 npx -y browsight setup
 ```
 
-That one command does everything: generates a secure token, copies the extension to your machine, and registers the MCP server with your AI client automatically.
+The setup command:
 
-**Then load the extension into Chrome (one time):**
+1. Generates a random authentication token.
+2. Copies the extension to a stable folder on your computer.
+3. Adds Browsight to supported MCP client configurations.
 
-1. Open `chrome://extensions`
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked**
-4. Select `~/.browsight/extension`
+Then load the extension into Chrome:
 
-Restart your MCP client (Claude Desktop, Cursor, etc.) and you are done.
+1. Open `chrome://extensions`.
+2. Enable **Developer mode** in the top-right corner.
+3. Click **Load unpacked**.
+4. Select the `.browsight/extension` folder inside your home directory.
+5. Restart your MCP client.
 
-**Allow a site:** click the browsight icon in your toolbar, pick **read-only** or **full control**, and click **Grant access**. Do this once per site — the agent remembers it.
+On Windows, the default extension path is:
 
-**Check everything is working:**
+```text
+C:\Users\<your-name>\.browsight\extension
+```
 
-```bash
+Run the diagnostic command if you want to verify the installation:
+
+```sh
 npx browsight doctor
 ```
 
----
+Browsight follows the MCP client's lifetime while any site access is active. If the extension reports zero active site grants for 30 minutes, the local server shuts down; allowing a site cancels that countdown. The status signal contains only a count, never site names or URLs.
 
-## What the agent can do
+Change the no-access timeout when starting the server manually:
 
-```
-browser_read   { url? }                → current page as compact markdown + numbered element refs
-browser_act    { ref, action, value? } → click / fill / navigate / scroll
-browser_tabs   { select? }             → list open tabs, or switch to one and read it
+```sh
+npx browsight serve --idle-timeout 60
 ```
 
-A typical Gmail inbox comes out to about 300 tokens. A LinkedIn job listing is around 400. The agent can read, act, and navigate without you manually copying anything.
+Use `--idle-timeout 0` to disable no-access shutdown. Temporary site grants use a sliding inactivity window: an approved read or action on that site renews its timer, so access expires after you stop using it rather than in the middle of a task.
 
----
+If an older or crashed server still owns the configured port and no MCP application is using Browsight, move the installation to a fresh loopback port:
 
-## How it reads a page
-
-The extension runs a content script that walks the live DOM using the browser's own accessibility tree — the same signal a screen reader uses. Every element gets its ARIA role and accessible name. Hidden elements, scripts, styles, and footers are skipped.
-
-A Gmail inbox looks like this to the agent:
-
+```sh
+npx browsight setup --new-port
 ```
-# Inbox — 3 unread
-Receipt from Stripe arrived today.
+
+Then reload the Browsight extension on `chrome://extensions` and restart the MCP client. This recovery changes only Browsight's local configuration and does not terminate an unknown process.
+
+## What it can do
+
+```text
+browser_read { mode? }               Read the selected tab (`full` or `main`)
+browser_act { ref, action, value? }  Click, fill, navigate, or scroll
+browser_tabs { select? }             List tabs or select an approved tab
+```
+
+The tools are intentionally small. There is no arbitrary JavaScript execution and no tool that can grant itself more access.
+
+A normal loop looks like this:
+
+```text
+1. browser_tabs                 Find an approved tab
+2. browser_read                 Get the page text and control references
+3. browser_act { ref: "5",
+                 action: "click" }
+4. browser_act result           dom_changed: compose window appeared
+```
+
+## How page reading works
+
+Sending raw HTML to a model is expensive and noisy. A real application page can contain thousands of DOM nodes, scripts, styles, tracking markup, and hidden controls that are irrelevant to the task.
+
+Browsight walks the live page and rebuilds a compact semantic view using accessibility roles and accessible names. A Gmail-style inbox can look like this:
+
+```text
+# Inbox
+3 unread messages
 [button "Compose" #5]
 [textbox "Search mail" #6]
-- [link "Stripe receipt" #7]
+[link "Stripe receipt" #7]
 ```
 
-When the agent acts on `#5`, the extension looks it up by role + accessible name — not a brittle CSS selector. References survive re-renders. Every action returns a diff of what changed so the agent knows what happened without reading the page again.
+Readable text stays readable. Interactive controls receive numbered references. The agent can click `#5` or fill `#6` without relying on screen coordinates or fragile CSS class names.
 
----
+Each reference also carries a small fingerprint containing its role, accessible name, selected attributes, text, and position among similar controls. If React, Vue, or another framework rerenders the page before the action arrives, Browsight uses that fingerprint to find the control again. If the match is missing or ambiguous, it returns a clear error instead of guessing.
 
-## Architecture
+After an action, Browsight waits for a bounded DOM quiet period and returns a verdict plus a capped list of what appeared, disappeared, or changed. Only relevant new references are returned. The agent usually does not need to read the whole page again just to check whether a click worked.
 
+On dense applications, `browser_read { mode: "main" }` focuses on the page's primary landmark. When a dialog is open, Browsight automatically reads that active dialog first instead of spending tokens on the background page. Actions reuse the preceding snapshot, so a click or fill can run immediately rather than rescanning a large inbox or feed before acting.
+
+### The snapshot pipeline
+
+For each read, Browsight:
+
+1. Finds the tab selected through Browsight.
+2. Checks the tab's origin against the extension's active grants.
+3. Injects the content script if it is not already present.
+4. Walks visible DOM nodes, open shadow roots, and same-origin frames.
+5. Calculates accessibility roles, names, control states, and durable reference recipes.
+6. Sends the compact snapshot through the authenticated local bridge, where common secret patterns are masked before MCP output is returned.
+
+Very large snapshots are capped with an explicit truncation marker. The agent can switch to `main` mode or scroll instead of paying for an unbounded page dump.
+
+Scrolling is DOM-aware. Browsight chooses the visible scroll surface around the active control or the center of the page, including inner application panes, and moves by 80% of that surface so adjacent reads overlap. The `more` action watches the composed DOM for new text, controls, or scroll range across open shadow roots and same-origin frames.
+
+### True Keyboard & Mouse Simulation
+
+Basic DOM clicks often fail on modern Single Page Applications (like Gmail, YouTube, or Amazon) because React and Vue ignore programmatic changes that lack real user interaction events. 
+
+Browsight solves this by injecting **True Keyboard and Mouse Simulation** directly into the page. 
+
+Filling uses the control's native value setter, focus and selection updates, then dispatches a full `KeyboardEvent` chain (`keydown`, `keypress`, `keyup`, including `Enter` key simulation) and `beforeinput`, `input`, and `change` events. This is the exact path modern frameworks observe. 
+
+Clicks inject a synthetic `MouseEvent` chain that combines pointer events with the element's native activation behavior, which preserves links, labels, forms, and delegated framework handlers—all without requesting Chrome's invasive `debugger` permission.
+
+This is closer to giving an agent a small, text-based accessibility view with true human simulation than streaming a screenshot or dumping the page's HTML.
+
+## How the pieces connect
+
+```text
+MCP client
+    | MCP over stdio
+    v
+Browsight server on your computer
+    | authenticated WebSocket on 127.0.0.1
+    v
+Browsight Chrome extension
+    | permission check and content script
+    v
+Your approved browser tab
 ```
-AI agent (Claude, Cursor, Codex…)
-   │  MCP over stdio
-   ▼
-browsight server  (Node.js, local)
-   │  WebSocket · 127.0.0.1 only · per-install auth token
-   ▼
-browsight extension  (Manifest V3 · service worker + content script)
-   │  permission-gated · runs inside YOUR Chrome
-   ▼
-your real browser tab
-```
 
-The extension is the only part that ever touches a page. The server routes messages and strips secrets (passwords, API keys) from snapshots before they reach the model. The WebSocket only binds to loopback — nothing is exposed on your network.
+The extension is the only component that touches a page. The server cannot bypass extension permissions or change the site allowlist.
 
----
+The WebSocket listens only on the local loopback interface and requires a random per-install token. Messages are checked against shared Zod schemas before they are handled. Before page content is returned to the MCP client, the server masks common password, API key, bearer token, access key, Slack token, and JSON Web Token patterns.
 
-## Permissions
+## Site permissions
 
-Sites are **denied by default**. You grant access per-site through the extension popup. The whitelist lives in `chrome.storage.local` and can only be written by you through the popup UI after a Chrome-native permission prompt.
+Every site starts blocked. Open the Browsight extension popup while visiting a site and choose one of two access levels:
 
-No MCP message can grant or escalate access. The agent cannot read or modify the whitelist. Non-whitelisted tabs appear in `browser_tabs` by origin only, so the agent can ask you to allow them — it never silently fails or reads something you did not approve.
+- **Read-only** lets the agent read the page.
+- **Full control** lets the agent read and interact with the page.
 
----
+Grants can expire after a selected period of inactivity or remain active until you revoke them. An authorized operation renews only the grant for the site being used. Grants are stored in `chrome.storage.local` and backed by Chrome's native host-permission prompt.
 
-## Why not CDP or Playwright?
+Tabs without a grant are still listed by title and origin so the agent can tell you which site needs approval. Their page content is not read.
 
-Chrome 136 disabled remote debugging on the default profile. Playwright and CDP now require launching a separate browser process — which means no cookies, no saved logins, no extensions. An in-browser Manifest V3 extension is currently the only reliable way to reach your real, authenticated tabs without any of that.
+## Why an extension instead of Playwright or CDP?
 
----
+Playwright and Chrome DevTools Protocol automation normally use a separate browser process or profile. That is useful for repeatable testing, but it does not naturally provide the everyday browser session where you are already signed in.
 
-## Caveats
+Browsight runs inside Chrome as a Manifest V3 extension, so it can work with the session you chose while still enforcing access one site at a time.
 
-- **Cross-origin iframes** cannot be read — they appear as `[unreadable frame (cross-origin)]` so the gap is always visible to the agent
-- **Same-origin iframes** and open shadow roots are fully traversed
-- **Synthetic events** have `isTrusted: false` — a small number of hardened inputs detect this
-- Token count varies — content-heavy pages compress significantly more than dense app UIs
+## Where Browsight fits
 
----
+Browsight provides secure browser access as a small, inspectable MCP capability. It works across different clients, stays on the local machine, does not request Chrome's `debugger` permission, and only interacts with sites you explicitly approve.
 
-## Contributing
+While tools like [Firecrawl](https://docs.firecrawl.dev/introduction) are designed for hosted web scraping, and Playwright is built for full browser test automation, Browsight focuses on one specific job: safely connecting any MCP client to an approved tab in the browser session you already use, completely free of vendor lock-in.
 
-```bash
-git clone https://github.com/anexinwilson/browsight
+## Current limitations
+
+- Cross-origin iframes cannot be read from the content script.
+- Closed shadow roots cannot be inspected.
+- Synthetic events have `isTrusted: false`, so some hardened controls may ignore them.
+- Chrome internal pages and other restricted URLs do not allow content-script injection.
+- Only one MCP client can control the local bridge at a time.
+
+## Development
+
+```sh
+git clone https://github.com/anexinwilson/browsight.git
 cd browsight
 npm install
-npm run build       # tsdown (server) + esbuild (extension)
-npm test            # 112 unit tests
-npm run lint        # Biome
+npm run typecheck
+npm run lint
+npm test
+npm run build
 ```
 
-After editing the extension, run `npm run build` and click the **reload icon** on the extension card in `chrome://extensions`.
+After rebuilding the extension, open `chrome://extensions` and click the reload button on its extension card.
 
-CI runs on every push: typecheck, lint, tests, SonarCloud static analysis, and Snyk dependency scan.
-
----
-
-## Stack
-
-- **TypeScript** strict · Node 24 · ESM · npm workspaces
-- **Perception:** `dom-accessibility-api` for ARIA role + accessible name resolution
-- **Protocol:** zod v4 schema shared between extension and server
-- **Transport:** `ws` WebSocket · loopback only · per-install token auth
-- **MCP:** `@modelcontextprotocol/sdk` (stdio)
-- **Build:** tsdown (server) · esbuild (extension)
-- **Quality:** Biome · `node:test` · SonarCloud · Snyk
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md) for repository conventions and [docs/DESIGN.md](docs/DESIGN.md) for implementation details.
 
 ## License
 

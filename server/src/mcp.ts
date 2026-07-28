@@ -1,3 +1,4 @@
+import type { ActResponse } from "@browsight/shared";
 /**
  * The MCP surface. Registers the tools the client calls and turns bridge responses into
  * token-lean results: `browser_read`, `browser_act`, and `browser_tabs`.
@@ -8,19 +9,68 @@ import type { Bridge } from "./bridge.ts";
 import { estimateTokens, isLoginWall, stripSecrets } from "./extract.ts";
 import { formatTabs } from "./tabs.ts";
 
+const MAX_DIFF_ITEMS = 8;
+const MAX_RESULT_REFS = 24;
+
+function refKey(role: string, name: string): string {
+  return `${role} ${JSON.stringify(name)}`;
+}
+
+function compactList(label: string, items: readonly string[]): string {
+  if (items.length === 0) {
+    return "";
+  }
+  const shown = items.slice(0, MAX_DIFF_ITEMS);
+  const omitted = items.length - shown.length;
+  const omittedSuffix = omitted > 0 ? ` (+${omitted} more)` : "";
+  return `${label}: ${shown.join(", ")}${omittedSuffix}`;
+}
+
+function baseDiffKey(value: string): string {
+  return value.replace(/ \(x\d+\)$/, "");
+}
+
+export function formatActResponse(res: ActResponse): string {
+  const changes = [
+    compactList("appeared", res.diff.appeared),
+    compactList("removed", res.diff.removed),
+    compactList("changed", res.diff.changed),
+  ]
+    .filter(Boolean)
+    .join("; ");
+  const relevant = new Set(
+    [...res.diff.appeared, ...res.diff.changed].map((item) => baseDiffKey(item)),
+  );
+  const matchingRefs = res.refs.filter((r) => relevant.has(refKey(r.role, r.name)));
+  const refsList = matchingRefs
+    .slice(0, MAX_RESULT_REFS)
+    .map((r) => `[${r.role} ${JSON.stringify(r.name)} #${r.id}]`)
+    .join("\n");
+  const omittedRefs = matchingRefs.length - Math.min(matchingRefs.length, MAX_RESULT_REFS);
+  const refsSuffix =
+    omittedRefs > 0 ? `\n[${omittedRefs} additional changed controls omitted]` : "";
+  const summary = changes ? `${res.verdict}: ${changes}` : res.verdict;
+  const refsSection = refsList ? `\n\n${refsList}${refsSuffix}` : "";
+  return stripSecrets(`${summary}${refsSection}`);
+}
+
 /** Build the MCP server, wiring `browser_read` and `browser_act` to the bridge. */
-export function createMcpServer(bridge: Bridge): McpServer {
-  const server = new McpServer({ name: "browsight", version: "0.0.0" });
+export function createMcpServer(bridge: Bridge, onActivity: () => void = () => {}): McpServer {
+  const server = new McpServer({ name: "browsight", version: "0.1.4" });
 
   server.registerTool(
     "browser_read",
     {
       description:
-        "Read the current Chrome tab as clean, structured context (markdown plus interactive references). Uses your real, logged-in session.",
-      inputSchema: { url: z.string().optional() },
+        "Read the current Chrome tab as clean, structured context (markdown plus interactive references). Uses your real, logged-in session. Use mode = main on dense applications to focus on the primary content region and reduce tokens; full remains the safe default.",
+      inputSchema: {
+        url: z.string().optional(),
+        mode: z.enum(["full", "main"]).optional(),
+      },
     },
-    async ({ url }) => {
-      const res = await bridge.readActiveTab(url ?? null);
+    async ({ url, mode }) => {
+      onActivity();
+      const res = await bridge.readActiveTab(url ?? null, mode ?? "full");
       if (res.sentinel) {
         return { content: [{ type: "text" as const, text: `🔒 ${res.sentinel.hint}` }] };
       }
@@ -61,6 +111,7 @@ export function createMcpServer(bridge: Bridge): McpServer {
       },
     },
     async (req) => {
+      onActivity();
       const res = await bridge.actActiveTab({
         ref: req.ref,
         action: req.action,
@@ -69,21 +120,10 @@ export function createMcpServer(bridge: Bridge): McpServer {
       if (res.sentinel) {
         return { content: [{ type: "text" as const, text: `⚠ ${res.sentinel.hint}` }] };
       }
-      const changes = [
-        res.diff.appeared.length > 0 ? `appeared: ${res.diff.appeared.join(", ")}` : "",
-        res.diff.removed.length > 0 ? `removed: ${res.diff.removed.join(", ")}` : "",
-        res.diff.changed.length > 0 ? `changed: ${res.diff.changed.join(", ")}` : "",
-      ]
-        .filter(Boolean)
-        .join("; ");
-      const refsList = res.refs
-        .map((r) => `[${r.role} ${JSON.stringify(r.name)} #${r.id}]`)
-        .join("\n");
-      const summary = changes ? `${res.verdict} — ${changes}` : res.verdict;
       // Scrub secrets from the act output too, not just reads: ref names and diff entries are live
       // accessible names that can contain a token or key.
       return {
-        content: [{ type: "text" as const, text: stripSecrets(`${summary}\n\n${refsList}`) }],
+        content: [{ type: "text" as const, text: formatActResponse(res) }],
       };
     },
   );
@@ -96,6 +136,7 @@ export function createMcpServer(bridge: Bridge): McpServer {
       inputSchema: { select: z.string().optional() },
     },
     async ({ select }) => {
+      onActivity();
       const res = await bridge.listTabs(select ?? null);
       if (res.sentinel) {
         // Still show the list so the user can see what's open and which tab to whitelist.

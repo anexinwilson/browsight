@@ -56,7 +56,10 @@ export function originOf(url: string): string {
 
 /** Inject the content script and read the page. Shared by the read path and the tab-switch path. The
  *  content script keeps the read's references in the page itself, so the act re-resolves them there. */
-export async function readTabContent(tabId: number): Promise<ContentReadResult> {
+export async function readTabContent(
+  tabId: number,
+  mode: "full" | "main" = "full",
+): Promise<ContentReadResult> {
   await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
-  return (await chrome.tabs.sendMessage(tabId, { kind: "read" })) as ContentReadResult;
+  return (await chrome.tabs.sendMessage(tabId, { kind: "read", mode })) as ContentReadResult;
 }

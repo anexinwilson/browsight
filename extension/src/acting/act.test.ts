@@ -69,7 +69,7 @@ gThis.InputEvent = dom.window.InputEvent || dom.window.Event;
 
 // Now import the modules
 import { dispatchClick, fillEditable, fillSelect, fillValue, performAct } from "./act.ts";
-import { rememberSnapshot } from "./resolve.ts";
+import { rememberSnapshot, resolveRef } from "./resolve.ts";
 
 if (!HTMLElement.prototype.scrollIntoView) {
   HTMLElement.prototype.scrollIntoView = () => {};
@@ -113,6 +113,59 @@ test("fillValue sets value and fires events on textarea", () => {
   assert.strictEqual(inputFired, 1);
   assert.strictEqual(changeFired, 1);
   textarea.remove();
+});
+
+test("fillValue uses the owning frame realm for same-origin inputs", () => {
+  const iframe = document.createElement("iframe");
+  document.body.appendChild(iframe);
+  const frameDocument = iframe.contentDocument;
+  assert.ok(frameDocument);
+  const input = frameDocument.createElement("input");
+  frameDocument.body.appendChild(input);
+  let beforeInputFired = 0;
+  let inputFired = 0;
+  input.addEventListener("beforeinput", () => beforeInputFired++);
+  input.addEventListener("input", () => inputFired++);
+
+  fillValue(input, "inside frame");
+
+  assert.equal(input.value, "inside frame");
+  assert.equal(beforeInputFired, 1);
+  assert.equal(inputFired, 1);
+  iframe.remove();
+});
+
+test("reference fallback descends into same-origin frame documents", () => {
+  const iframe = document.createElement("iframe");
+  document.body.appendChild(iframe);
+  const frameDocument = iframe.contentDocument;
+  assert.ok(frameDocument);
+  const button = frameDocument.createElement("button");
+  button.textContent = "Frame action";
+  button.getBoundingClientRect = () => ({ width: 100, height: 30 }) as DOMRect;
+  frameDocument.body.appendChild(button);
+  rememberSnapshot(
+    [
+      {
+        id: 91,
+        role: "button",
+        name: "Frame action",
+        recipe: {
+          role: "button",
+          name: "Frame action",
+          dataAttrs: {},
+          text: "Frame action",
+          ordinal: 0,
+        },
+      },
+    ],
+    new Map(),
+  );
+
+  const resolution = resolveRef("91");
+  assert.ok("el" in resolution);
+  assert.equal(resolution.el, button);
+  iframe.remove();
 });
 
 test("fillSelect selects options and fires events", () => {
@@ -255,7 +308,7 @@ test("scrollingViewport scrolls top, bottom, up, down", async () => {
     assert.strictEqual(currentScrollTop, 0);
 
     const resDown = await performAct("", "scroll", "down");
-    assert.strictEqual(currentScrollTop, 200);
+    assert.strictEqual(currentScrollTop, 160);
 
     const resUp = await performAct("", "scroll", "up");
     assert.strictEqual(currentScrollTop, 0);
@@ -421,7 +474,7 @@ test("performAct with a contenteditable element calls fillEditable through tryPe
   div.remove();
 });
 
-test("performAct with value: undefined for fill ignores and covers tryPerformFill line 251-252", async () => {
+test("fill without a value leaves the page unchanged", async () => {
   const input = document.createElement("input");
   input.type = "text";
   document.body.appendChild(input);
@@ -433,7 +486,7 @@ test("performAct with value: undefined for fill ignores and covers tryPerformFil
   input.remove();
 });
 
-test("performAct where viewport scroll result returns a DOM change (hits line 237-238)", async () => {
+test("viewport scroll reports content loaded during the scroll", async () => {
   const root = document.scrollingElement || document.documentElement;
   let currentScrollTop = 0;
 
@@ -471,7 +524,7 @@ test("performAct where viewport scroll result returns a DOM change (hits line 23
   }
 });
 
-test("fillValue fallback when prototype setter descriptor for 'value' is missing (hits line 28-29)", () => {
+test("fillValue falls back when the prototype has no value setter", () => {
   const input = document.createElement("input");
   input.type = "text";
   document.body.appendChild(input);
@@ -479,7 +532,7 @@ test("fillValue fallback when prototype setter descriptor for 'value' is missing
   const originalDescriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
 
   try {
-    // Define a value property with no setter descriptor to trigger line 28-29
+    // Simulate a host environment that does not expose the native setter.
     Object.defineProperty(HTMLInputElement.prototype, "value", {
       value: "",
       writable: true,

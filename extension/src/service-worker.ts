@@ -7,6 +7,7 @@ import { type BridgeMessage, BridgeMessageSchema } from "@browsight/shared";
 import { handleAct } from "./messaging/act.ts";
 import { handleRead } from "./messaging/read.ts";
 import { handleTabs } from "./messaging/tabs.ts";
+import { listGrants } from "./permissions/storage.ts";
 
 interface Connection {
   readonly port: number;
@@ -18,13 +19,24 @@ interface Connection {
 const ALLOWED_WS_HOSTS = ["127.0.0.1", "localhost"] as const;
 type AllowedWsHost = (typeof ALLOWED_WS_HOSTS)[number];
 
-export let socket: WebSocket | null = null;
+let socket: WebSocket | null = null;
+let connectionAttempt: Promise<void> | null = null;
 export function setSocket(s: WebSocket | null): void {
   socket = s;
 }
 
 function send(msg: BridgeMessage): void {
   socket?.send(JSON.stringify(msg));
+}
+
+async function reportAccessStatus(target: WebSocket | null = socket): Promise<void> {
+  if (target?.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  const activeGrantCount = (await listGrants()).length;
+  if (target === socket && target.readyState === WebSocket.OPEN) {
+    target.send(JSON.stringify({ type: "access.status", activeGrantCount }));
+  }
 }
 
 export async function loadConnection(): Promise<Connection | null> {
@@ -44,7 +56,7 @@ export async function loadConnection(): Promise<Connection | null> {
   return null;
 }
 
-export async function connect(): Promise<void> {
+async function openConnection(): Promise<void> {
   if (socket && socket.readyState <= WebSocket.OPEN) {
     return;
   }
@@ -52,12 +64,12 @@ export async function connect(): Promise<void> {
   if (!conn) {
     return;
   }
-  // Guard: strictly map to allowlisted literal — user-supplied conn.host never touches WebSocket (S8480)
+  // Map configuration to an allowlisted literal before constructing the socket URL.
   const safeHost = ALLOWED_WS_HOSTS.find((h) => h === conn.host);
   if (!safeHost) {
     return;
   }
-  // Guard: parse port to a validated integer so user-supplied JSON data never enters the URL directly (S8480)
+  // Accept only a valid TCP port from the generated configuration.
   const safePort = Number.parseInt(String(conn.port), 10);
   if (Number.isNaN(safePort) || safePort < 1 || safePort > 65535) {
     return;
@@ -72,16 +84,17 @@ export async function connect(): Promise<void> {
         extensionVersion: chrome.runtime.getManifest().version,
       }),
     );
+    void reportAccessStatus(ws).catch(reportConnectionError);
   });
-  // deepcode ignore Insufficient postMessage Validation: this is a WebSocket, not window.postMessage
-  ws.addEventListener("message", (ev) => {
+  // Use WebSocket's dedicated handler property so this cannot be mistaken for a window
+  // `postMessage` listener; only frames from this authenticated loopback socket reach it.
+  ws.onmessage = (ev) => {
     const expectedOrigin = `ws://${safeHost}:${safePort}`;
-    if (ev.origin === expectedOrigin) {
-      void route(String(ev.data));
-    } else {
+    if (ev.origin !== expectedOrigin) {
       return;
     }
-  });
+    void route(String(ev.data));
+  };
   ws.addEventListener("close", () => {
     if (socket === ws) {
       socket = null;
@@ -90,6 +103,21 @@ export async function connect(): Promise<void> {
   ws.addEventListener("error", () => {
     ws.close();
   });
+}
+
+export async function connect(): Promise<void> {
+  if (socket && socket.readyState <= WebSocket.OPEN) {
+    return;
+  }
+  if (connectionAttempt) {
+    return connectionAttempt;
+  }
+  connectionAttempt = openConnection();
+  try {
+    await connectionAttempt;
+  } finally {
+    connectionAttempt = null;
+  }
 }
 
 /** Parse one bridge frame and dispatch it to the handler for its request type. */
@@ -101,7 +129,7 @@ export async function route(raw: string): Promise<void> {
     return;
   }
   if (msg.type === "read.request") {
-    await handleRead(send, msg.id);
+    await handleRead(send, msg.id, msg.mode);
   } else if (msg.type === "act.request") {
     await handleAct(send, msg);
   } else if (msg.type === "tabs.request") {
@@ -110,13 +138,25 @@ export async function route(raw: string): Promise<void> {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  void connect();
+  requestConnection();
 });
 chrome.runtime.onStartup.addListener(() => {
-  void connect();
+  requestConnection();
 });
 chrome.alarms.create("browsight-keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener(() => {
-  void connect();
+  requestConnection();
+  void reportAccessStatus().catch(reportConnectionError);
 });
-void connect();
+
+function reportConnectionError(error: unknown): void {
+  console.error("browsight connection failed", error);
+}
+
+function requestConnection(): void {
+  connect().catch(reportConnectionError);
+}
+
+// Extension service workers reject top-level await even when the manifest declares an ESM worker.
+// Start asynchronously so registration can finish before the first bridge connection attempt.
+requestConnection();

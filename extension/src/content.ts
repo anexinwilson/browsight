@@ -23,6 +23,7 @@ interface ActResult {
 
 interface ContentMessage {
   readonly kind?: string;
+  readonly mode?: "full" | "main";
   readonly ref?: string;
   readonly action?: Action;
   readonly value?: string;
@@ -49,8 +50,8 @@ if (!globalThis.__browsightInjected) {
       const activePerformAct = (globalThis as any).__mockPerformAct || performAct;
 
       if (message.kind === "read") {
-        const snap = activeBuildSnapshot(document);
-        activeRememberSnapshot(snap.refs, snap.elements);
+        const snap = activeBuildSnapshot(document, { mode: message.mode ?? "full" });
+        activeRememberSnapshot(snap.refs, snap.elements, snap.markdown);
         // Freshness marker: performance.timeOrigin is the page's load time — constant for one page
         // instance, and it changes on every reload/navigation. It reflects the PAGE load, not this
         // content script's re-injection (the same document keeps the same timeOrigin), so comparing
@@ -63,8 +64,19 @@ if (!globalThis.__browsightInjected) {
         });
         return false;
       }
-      if (message.kind === "act" && message.ref && message.action) {
-        void activePerformAct(message.ref, message.action, message.value).then(sendResponse);
+      const hasTarget = typeof message.ref === "string" && message.ref.length > 0;
+      const isViewportScroll = message.action === "scroll" && typeof message.value === "string";
+      if (message.kind === "act" && message.action && (hasTarget || isViewportScroll)) {
+        activePerformAct(message.ref, message.action, message.value)
+          .then(sendResponse)
+          .catch((error: unknown) => {
+            sendResponse({
+              verdict: "no_change",
+              diff: { appeared: [], removed: [], changed: [] },
+              refs: [],
+              sentinel: { kind: "frame_unreachable", hint: `page action failed: ${String(error)}` },
+            });
+          });
         return true;
       }
       return false;

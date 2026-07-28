@@ -4,10 +4,16 @@
  * `./settle.ts`; this module orchestrates them.
  */
 import type { Action, Diff, Ref, Sentinel, Verdict } from "@browsight/shared";
-import { INTERACTIVE_SELECTOR } from "../perception/dom.ts";
 import { buildSnapshot } from "../perception/snapshot.ts";
 import { computeDiff, selectVerdict } from "./diff.ts";
-import { rememberSnapshot, resolveRef } from "./resolve.ts";
+import { rememberSnapshot, rememberedSnapshot, resolveRef } from "./resolve.ts";
+import {
+  type ScrollDirection,
+  findScrollTarget,
+  observeSemanticGrowth,
+  scrollActiveSurface,
+  scrollSurface,
+} from "./scroll.ts";
 import { settle } from "./settle.ts";
 
 export interface ActResult {
@@ -17,23 +23,63 @@ export interface ActResult {
   readonly sentinel?: Sentinel;
 }
 
+function realmOf(el: Element): typeof globalThis {
+  return (el.ownerDocument.defaultView ?? globalThis) as unknown as typeof globalThis;
+}
+
+function tagName(el: Element): string {
+  return el.tagName.toLowerCase();
+}
+
+function isTextControl(el: Element): el is HTMLInputElement | HTMLTextAreaElement {
+  const tag = tagName(el);
+  return tag === "input" || tag === "textarea";
+}
+
+function isSelectControl(el: Element): el is HTMLSelectElement {
+  return tagName(el) === "select";
+}
+
 export function fillValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const realm = realmOf(el);
   const proto =
-    el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    tagName(el) === "textarea"
+      ? realm.HTMLTextAreaElement.prototype
+      : realm.HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
   el.focus();
+  el.dispatchEvent(
+    new realm.InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      inputType: "insertText",
+      data: value,
+    }),
+  );
   if (setter) {
     setter.call(el, value);
   } else {
     el.value = value;
   }
-  for (const type of ["input", "change", "blur"]) {
-    el.dispatchEvent(new Event(type, { bubbles: true }));
+  if (typeof el.setSelectionRange === "function") {
+    el.setSelectionRange(value.length, value.length);
   }
+  el.dispatchEvent(
+    new realm.InputEvent("input", {
+      bubbles: true,
+      composed: true,
+      inputType: "insertText",
+      data: value,
+    }),
+  );
+  el.dispatchEvent(new realm.Event("change", { bubbles: true, composed: true }));
+  el.blur();
 }
 
 /** Select an <option> by its value, label, or visible text. */
 export function fillSelect(el: HTMLSelectElement, value: string): boolean {
+  const realm = realmOf(el);
   const match = Array.from(el.options).find(
     (o) => o.value === value || o.label === value || o.text.trim() === value,
   );
@@ -41,25 +87,32 @@ export function fillSelect(el: HTMLSelectElement, value: string): boolean {
     return false;
   }
   el.value = match.value;
-  el.dispatchEvent(new Event("input", { bubbles: true }));
-  el.dispatchEvent(new Event("change", { bubbles: true }));
+  el.dispatchEvent(new realm.Event("input", { bubbles: true, composed: true }));
+  el.dispatchEvent(new realm.Event("change", { bubbles: true, composed: true }));
   return el.value === match.value;
 }
 
 /** Replace the text of a contenteditable host, dispatching the input events editors listen for. */
 export function fillEditable(el: HTMLElement, value: string): boolean {
+  const realm = realmOf(el);
   el.focus();
   el.dispatchEvent(
-    new InputEvent("beforeinput", {
+    new realm.InputEvent("beforeinput", {
       bubbles: true,
       cancelable: true,
+      composed: true,
       inputType: "insertText",
       data: value,
     }),
   );
   el.textContent = value;
   el.dispatchEvent(
-    new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }),
+    new realm.InputEvent("input", {
+      bubbles: true,
+      composed: true,
+      inputType: "insertText",
+      data: value,
+    }),
   );
   return (el.textContent ?? "") === value;
 }
@@ -74,36 +127,15 @@ const SCROLL_DIRECTIONS = new Set(["up", "down", "top", "bottom"]);
 // pages like YouTube mutate constantly, so a mutation-settle would never go quiet and would blow the
 // budget; a short fixed pause plus a cheap element count is enough to notice new content arriving.
 const LOAD_MORE_STEPS = 6;
-const LOAD_MORE_PAUSE_MS = 450;
+const LOAD_MORE_PAUSE_MS = 700;
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** A cheap count of interactive elements — used to notice that lazy content has started loading
- *  without paying for a full accessibility snapshot on every page step. */
-function interactiveCount(): number {
-  return document.querySelectorAll(INTERACTIVE_SELECTOR).length;
-}
-
-/** The element that scrolls the page — the document in almost every case. */
-function scrollingRoot(): Element {
-  return document.scrollingElement ?? document.documentElement;
-}
 
 /** Scroll the page itself — used to reach lazily-loaded content (comments, infinite feeds) that no
  *  current reference points at yet. Returns how far it actually moved, so a caller can tell "nothing
  *  more to load" from "the scroll never moved". */
 function scrollViewport(direction: string): { movedPx: number } {
-  const root = scrollingRoot();
-  const startTop = root.scrollTop;
-  const page = root.clientHeight || globalThis.innerHeight;
-  if (direction === "bottom") {
-    root.scrollTo({ top: root.scrollHeight });
-  } else if (direction === "top") {
-    root.scrollTo({ top: 0 });
-  } else {
-    root.scrollBy({ top: direction === "up" ? -page : page });
-  }
-  return { movedPx: Math.round(root.scrollTop - startTop) };
+  return scrollActiveSurface(document, direction as ScrollDirection);
 }
 
 /**
@@ -114,6 +146,9 @@ function scrollViewport(direction: string): { movedPx: number } {
  * handlers run, while the trailing `click` still triggers native activation (link nav, form submit).
  */
 export function dispatchClick(el: Element): void {
+  const realm = realmOf(el);
+  const PointerCtor = realm.PointerEvent ?? globalThis.PointerEvent;
+  const MouseCtor = realm.MouseEvent ?? globalThis.MouseEvent;
   const rect = (el as HTMLElement).getBoundingClientRect?.();
   const clientX = rect ? rect.left + rect.width / 2 : 0;
   const clientY = rect ? rect.top + rect.height / 2 : 0;
@@ -121,7 +156,7 @@ export function dispatchClick(el: Element): void {
     bubbles: true,
     cancelable: true,
     composed: true,
-    view: globalThis as unknown as Window,
+    view: realm as unknown as Window,
     button: 0,
     clientX,
     clientY,
@@ -132,16 +167,21 @@ export function dispatchClick(el: Element): void {
     pointerType: "mouse",
     isPrimary: true,
   };
-  el.dispatchEvent(new PointerEvent("pointerover", pointer));
-  el.dispatchEvent(new PointerEvent("pointerenter", pointer));
-  el.dispatchEvent(new PointerEvent("pointerdown", pointer));
-  el.dispatchEvent(new MouseEvent("mousedown", mouse));
-  if (el instanceof HTMLElement) {
-    el.focus();
+  el.dispatchEvent(new PointerCtor("pointerover", pointer));
+  el.dispatchEvent(new PointerCtor("pointerenter", pointer));
+  el.dispatchEvent(new PointerCtor("pointerdown", pointer));
+  el.dispatchEvent(new MouseCtor("mousedown", mouse));
+  if (typeof (el as HTMLElement).focus === "function") {
+    (el as HTMLElement).focus();
   }
-  el.dispatchEvent(new PointerEvent("pointerup", pointer));
-  el.dispatchEvent(new MouseEvent("mouseup", mouse));
-  el.dispatchEvent(new MouseEvent("click", mouse));
+  el.dispatchEvent(new PointerCtor("pointerup", pointer));
+  el.dispatchEvent(new MouseCtor("mouseup", mouse));
+  const clickable = el as HTMLElement;
+  if (typeof clickable.click === "function") {
+    clickable.click();
+  } else {
+    el.dispatchEvent(new MouseCtor("click", mouse));
+  }
 }
 
 /** Settle, snapshot the result, remember it for the next act, and report verdict + diff + refs. */
@@ -149,13 +189,15 @@ async function settleAndReport(
   action: Action,
   before: { readonly markdown: string; readonly refs: Ref[] },
   valueSet: boolean,
+  scope: Node = document.documentElement,
 ): Promise<ActResult> {
-  await settle();
+  await settle(scope);
   const after = buildSnapshot(document);
-  rememberSnapshot(after.refs, after.elements);
+  rememberSnapshot(after.refs, after.elements, after.markdown);
+  const diff = computeDiff(before.refs, after.refs);
   return {
-    verdict: selectVerdict(action, before.markdown, after.markdown, valueSet),
-    diff: computeDiff(before.refs, after.refs),
+    verdict: selectVerdict(action, before.markdown || after.markdown, after.markdown, valueSet),
+    diff,
     refs: after.refs,
   };
 }
@@ -168,37 +210,50 @@ async function settleAndReport(
  * skipping past a load-trigger on tall, asymmetric layouts. Stops the moment something loads.
  */
 async function loadMore(): Promise<ActResult> {
-  const before = buildSnapshot(document);
-  const baseline = interactiveCount();
+  const before = rememberedSnapshot() ?? buildSnapshot(document);
+  const selected = findScrollTarget(document, "down");
+  let contentGrew = false;
+  const stopObserving = observeSemanticGrowth(
+    document,
+    () => {
+      contentGrew = true;
+    },
+    selected.element,
+  );
   // Each step: page down one viewport, pause briefly for any lazy content to begin loading, then do a
-  // cheap count check. Only when something new has appeared (or we bottom out) do we pay for a full
-  // snapshot. This keeps the whole loop fast enough to finish inside the request timeout.
-  for (let step = 0; step < LOAD_MORE_STEPS; step++) {
-    const { movedPx } = scrollViewport("down");
-    await wait(LOAD_MORE_PAUSE_MS);
-    if (interactiveCount() > baseline) {
-      await settle();
-      const after = buildSnapshot(document);
-      rememberSnapshot(after.refs, after.elements);
-      return {
-        verdict: "dom_changed",
-        diff: computeDiff(before.refs, after.refs),
-        refs: after.refs,
-      };
+  // mutation flag. Only when something appears (or we bottom out) do we pay for a full snapshot.
+  try {
+    for (let step = 0; step < LOAD_MORE_STEPS; step++) {
+      // Keep paging the same surface. Re-running composed-tree target selection on every step is
+      // needlessly expensive on large application DOMs and can consume the entire action budget.
+      const movedPx = scrollSurface(selected.element, "down");
+      await wait(LOAD_MORE_PAUSE_MS);
+      if (contentGrew) {
+        await settle();
+        const after = buildSnapshot(document);
+        rememberSnapshot(after.refs, after.elements, after.markdown);
+        return {
+          verdict: "dom_changed",
+          diff: computeDiff(before.refs, after.refs),
+          refs: after.refs,
+        };
+      }
+      if (movedPx === 0) {
+        const after = buildSnapshot(document);
+        rememberSnapshot(after.refs, after.elements, after.markdown);
+        return {
+          verdict: "no_change",
+          diff: EMPTY_DIFF,
+          refs: after.refs,
+          sentinel: { kind: "not_actionable", hint: "reached the bottom — nothing more to load" },
+        };
+      }
     }
-    if (movedPx === 0) {
-      const after = buildSnapshot(document);
-      rememberSnapshot(after.refs, after.elements);
-      return {
-        verdict: "no_change",
-        diff: EMPTY_DIFF,
-        refs: after.refs,
-        sentinel: { kind: "not_actionable", hint: "reached the bottom — nothing more to load" },
-      };
-    }
+  } finally {
+    stopObserving();
   }
   const after = buildSnapshot(document);
-  rememberSnapshot(after.refs, after.elements);
+  rememberSnapshot(after.refs, after.elements, after.markdown);
   return {
     verdict: "no_change",
     diff: EMPTY_DIFF,
@@ -219,7 +274,7 @@ async function handleViewportScroll(
   }
 
   if (action === "scroll" && value && SCROLL_DIRECTIONS.has(value)) {
-    const before = buildSnapshot(document);
+    const before = rememberedSnapshot() ?? buildSnapshot(document);
     const { movedPx } = scrollViewport(value);
     const result = await settleAndReport(action, before, false);
     if (result.verdict === "no_change") {
@@ -242,7 +297,11 @@ async function handleViewportScroll(
 function tryPerformFill(
   el: Element,
   value: string | undefined,
-  before: { readonly refs: Ref[]; readonly elements: Map<number, Element> },
+  before: {
+    readonly refs: Ref[];
+    readonly elements: Map<number, Element>;
+    readonly markdown: string;
+  },
 ):
   | { kind: "success"; valueSet: boolean }
   | { kind: "not_actionable"; result: ActResult }
@@ -250,19 +309,93 @@ function tryPerformFill(
   if (value === undefined) {
     return { kind: "ignored" };
   }
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    fillValue(el, value);
-    return { kind: "success", valueSet: el.value === value };
+
+  let actualValue = value;
+  const pressEnter = value.endsWith("\n");
+  if (pressEnter) {
+    actualValue = value.slice(0, -1);
   }
-  if (el instanceof HTMLSelectElement) {
-    return { kind: "success", valueSet: fillSelect(el, value) };
+
+  if (isTextControl(el)) {
+    fillValue(el, actualValue);
+    if (pressEnter) {
+      const realm = realmOf(el);
+      el.dispatchEvent(
+        new realm.KeyboardEvent("keydown", {
+          bubbles: true,
+          composed: true,
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+        }),
+      );
+      el.dispatchEvent(
+        new realm.KeyboardEvent("keypress", {
+          bubbles: true,
+          composed: true,
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+        }),
+      );
+      el.dispatchEvent(
+        new realm.KeyboardEvent("keyup", {
+          bubbles: true,
+          composed: true,
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+        }),
+      );
+    }
+    return { kind: "success", valueSet: el.value === actualValue };
   }
-  if (el instanceof HTMLElement && el.isContentEditable) {
-    return { kind: "success", valueSet: fillEditable(el, value) };
+  if (isSelectControl(el)) {
+    return { kind: "success", valueSet: fillSelect(el, actualValue) };
+  }
+  if ((el as HTMLElement).isContentEditable) {
+    const success = fillEditable(el as HTMLElement, actualValue);
+    if (pressEnter) {
+      const realm = realmOf(el);
+      el.dispatchEvent(
+        new realm.KeyboardEvent("keydown", {
+          bubbles: true,
+          composed: true,
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+        }),
+      );
+      el.dispatchEvent(
+        new realm.KeyboardEvent("keypress", {
+          bubbles: true,
+          composed: true,
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+        }),
+      );
+      el.dispatchEvent(
+        new realm.KeyboardEvent("keyup", {
+          bubbles: true,
+          composed: true,
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+        }),
+      );
+    }
+    return { kind: "success", valueSet: success };
   }
 
   // Not a fillable control — say so explicitly instead of silently reporting no_change.
-  rememberSnapshot(before.refs, before.elements);
+  rememberSnapshot(before.refs, before.elements, before.markdown);
   return {
     kind: "not_actionable",
     result: {
@@ -287,7 +420,7 @@ export async function performAct(ref: string, action: Action, value?: string): P
   const resolution = resolveRef(ref);
   if ("sentinel" in resolution) {
     const snap = buildSnapshot(document);
-    rememberSnapshot(snap.refs, snap.elements);
+    rememberSnapshot(snap.refs, snap.elements, snap.markdown);
     return {
       verdict: "no_change",
       diff: EMPTY_DIFF,
@@ -297,7 +430,8 @@ export async function performAct(ref: string, action: Action, value?: string): P
   }
 
   const el = resolution.el;
-  const before = buildSnapshot(document);
+  const before = rememberedSnapshot() ?? buildSnapshot(document);
+  const settleScope = document.documentElement;
   let valueSet = false;
 
   switch (action) {
@@ -311,6 +445,12 @@ export async function performAct(ref: string, action: Action, value?: string): P
       }
       if (fillResult.kind === "success") {
         valueSet = fillResult.valueSet;
+        rememberSnapshot(before.refs, before.elements, before.markdown);
+        return {
+          verdict: valueSet ? "value_set" : "no_change",
+          diff: EMPTY_DIFF,
+          refs: before.refs,
+        };
       }
       break;
     }
@@ -318,8 +458,11 @@ export async function performAct(ref: string, action: Action, value?: string): P
       el.scrollIntoView({ block: "center" });
       break;
     case "navigate":
+      if (value) {
+        window.location.href = value;
+      }
       break;
   }
 
-  return settleAndReport(action, before, valueSet);
+  return settleAndReport(action, before, valueSet, settleScope);
 }

@@ -17,13 +17,18 @@ function setStatus(text: string): void {
   el<HTMLDivElement>("status").textContent = text;
 }
 
+function reportUiError(error: unknown): void {
+  setStatus(`Browsight could not update this page: ${String(error)}`);
+}
+
 async function render(): Promise<void> {
   const tbody = el<HTMLTableSectionElement>("rows");
   const grants = await listGrants();
   tbody.replaceChildren();
   for (const g of grants) {
     const tr = document.createElement("tr");
-    const expires = g.expiresAt === null ? "never" : new Date(g.expiresAt).toLocaleString();
+    const expires =
+      g.expiresAt === null ? "never" : `${new Date(g.expiresAt).toLocaleString()} if inactive`;
     for (const text of [g.origin, g.tier === "full" ? "full control" : "read only", expires]) {
       const td = document.createElement("td");
       td.textContent = text;
@@ -33,7 +38,7 @@ async function render(): Promise<void> {
     const remove = document.createElement("button");
     remove.textContent = "Remove";
     remove.addEventListener("click", () => {
-      void revokeSite(g.origin).then(render);
+      revokeSite(g.origin).then(render).catch(reportUiError);
     });
     action.append(remove);
     tr.append(action);
@@ -66,15 +71,20 @@ async function init(): Promise<void> {
     const msRaw = el<HTMLSelectElement>("timer").value;
     const ms = msRaw === "null" ? null : Number(msRaw);
     const expiresAt = ms === null ? null : Date.now() + ms;
-    void grantSite({ origin, tier, expiresAt }).then((ok) => {
-      if (ok) {
-        el<HTMLInputElement>("origin").value = "";
-        void render();
-      } else {
+    grantSite({ origin, tier, expiresAt, idleTimeoutMs: ms })
+      .then((ok) => {
+        if (ok) {
+          el<HTMLInputElement>("origin").value = "";
+          return render();
+        }
         setStatus("Chrome declined the permission for that site.");
-      }
-    });
+      })
+      .catch(reportUiError);
   });
   await render();
 }
-void init();
+try {
+  await init();
+} catch (error: unknown) {
+  reportUiError(error);
+}

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 /**
  * `browsight setup` — the one-command bootstrap.
  *
@@ -11,11 +12,11 @@
  * Paths are rooted at $BROWSIGHT_HOME (defaults to the home directory) so the flow is testable.
  */
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 export interface McpEntry {
   readonly command: string;
@@ -35,7 +36,7 @@ export function mcpServerEntry(serverEntryPath: string): McpEntry {
 /** The MCP entry to write when running via npx — always re-fetches from the registry so the
  *  server is never tied to a temp cache path. */
 export function mcpNpxEntry(): McpEntry {
-  return { command: "npx", args: ["-y", "browsight"] };
+  return { command: "npx", args: ["-y", "browsight", "serve"] };
 }
 
 /** Merge the browsight entry into a client config object without disturbing other servers. */
@@ -100,7 +101,7 @@ function home(): string {
  *  the npx command form in client configs rather than an absolute path to the cache. */
 function isNpxContext(): boolean {
   // npx installs packages under a path containing _npx. A local repo clone never has this.
-  const p = SCRIPT_DIR.replace(/\\/g, "/");
+  const p = SCRIPT_DIR.replaceAll("\\", "/");
   return p.includes("/_npx/") || p.includes("/.cache/node/");
 }
 
@@ -175,14 +176,21 @@ export function readJson(path: string): Record<string, unknown> {
   }
 }
 
-export async function runSetup(): Promise<void> {
+export async function runSetup(options: { readonly newPort?: boolean } = {}): Promise<void> {
   const npx = isNpxContext();
 
   // Reuse the existing token + port if setup has run before, so re-running never moves the port out
   // from under a server that is already using it (the cause of ERR_CONNECTION_REFUSED on re-setup).
   const existing = readJson(bridgeConfigPath());
   const token = typeof existing.token === "string" ? existing.token : generateToken();
-  const port = typeof existing.port === "number" ? existing.port : await pickPort(8137);
+  let port: number;
+  if (options.newPort) {
+    port = await pickPort(0);
+  } else if (typeof existing.port === "number") {
+    port = existing.port;
+  } else {
+    port = await pickPort(8137);
+  }
   const host = typeof existing.host === "string" ? existing.host : "127.0.0.1";
 
   writeJson(bridgeConfigPath(), { host, port, token });
@@ -213,7 +221,7 @@ export async function runSetup(): Promise<void> {
   }
 
   const lines = [
-    "✓ browsight is configured.",
+    "[ok] browsight is configured.",
     "",
     "Load the extension into Chrome (one time):",
     "  1. open chrome://extensions",
@@ -250,7 +258,7 @@ export function runDoctor(): void {
     ["MCP server registered in a client config", registered],
   ];
   for (const [label, ok] of checks) {
-    process.stdout.write(`${ok ? "✓" : "✗"} ${label}\n`);
+    process.stdout.write(`${ok ? "[ok]" : "[missing]"} ${label}\n`);
   }
   const firstBroken = checks.find(([, ok]) => !ok);
   process.stdout.write(
@@ -260,7 +268,43 @@ export function runDoctor(): void {
   );
 }
 
-import { realpathSync } from "node:fs";
+export function runServe(args: readonly string[] = []): number {
+  if (!existsSync(SERVER_ENTRY)) {
+    process.stderr.write(
+      "browsight server is not built; reinstall the package or run `npm run build`\n",
+    );
+    return 1;
+  }
+  const child = spawnSync(process.execPath, [SERVER_ENTRY, ...args], { stdio: "inherit" });
+  if (child.error) {
+    process.stderr.write(`browsight server failed: ${String(child.error)}\n`);
+    return 1;
+  }
+  return child.status ?? 0;
+}
+
+export async function runCli(args: readonly string[]): Promise<number> {
+  const [command, ...rest] = args;
+  if (command === undefined || command === "setup") {
+    await runSetup({ newPort: rest.includes("--new-port") });
+    return 0;
+  }
+  if (command === "doctor") {
+    runDoctor();
+    return 0;
+  }
+  if (command === "serve") {
+    return runServe(rest);
+  }
+  if (command === "help" || command === "--help" || command === "-h") {
+    process.stdout.write(
+      "browsight <command>\n\nCommands:\n  setup   Configure clients and install the extension (supports --new-port)\n  doctor  Check the local installation\n  serve   Start the MCP server (supports --idle-timeout <minutes>)\n",
+    );
+    return 0;
+  }
+  process.stderr.write(`unknown browsight command: ${command}\n`);
+  return 1;
+}
 
 let isMain = false;
 if (process.argv[1]) {
@@ -271,15 +315,14 @@ if (process.argv[1]) {
   }
 }
 if (isMain) {
-  const isDoctor = process.argv.slice(2).includes("doctor");
-  if (isDoctor) {
-    runDoctor();
-  } else {
-    try {
-      await runSetup();
-    } catch (err: unknown) {
-      process.stderr.write(`setup failed: ${String(err)}\n`);
-      process.exit(1);
+  try {
+    const exitCode = await runCli(process.argv.slice(2));
+    if (exitCode !== 0) {
+      process.exit(exitCode);
     }
+  } catch (err: unknown) {
+    const command = process.argv[2] ?? "setup";
+    process.stderr.write(`${command} failed: ${String(err)}\n`);
+    process.exit(1);
   }
 }

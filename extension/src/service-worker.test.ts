@@ -166,6 +166,7 @@ class MockWebSocket {
   readyState = 0; // CONNECTING
   sentMessages: string[] = [];
   closed = false;
+  onmessage: ((event: any) => unknown) | null = null;
 
   constructor(url: string) {
     this.url = url;
@@ -189,6 +190,12 @@ class MockWebSocket {
   }
 
   trigger(type: string, eventData: any) {
+    if (type === "open") {
+      this.readyState = MockWebSocket.OPEN;
+    }
+    if (type === "message") {
+      this.onmessage?.(eventData);
+    }
     const list = this.listeners[type] || [];
     for (const cb of list) {
       cb(eventData);
@@ -208,12 +215,17 @@ test("service-worker initializes and authenticates over websocket", async () => 
 
   // Trigger open event to verify the auth handshake payload
   ws.trigger("open", {});
-  assert.strictEqual(ws.sentMessages.length, 1);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.strictEqual(ws.sentMessages.length, 2);
   const authPayload = JSON.parse(ws.sentMessages[0]);
   assert.deepEqual(authPayload, {
     type: "auth",
     token: "mock-secret-token",
     extensionVersion: "2.3.4",
+  });
+  assert.deepEqual(JSON.parse(ws.sentMessages[1]), {
+    type: "access.status",
+    activeGrantCount: 1,
   });
 });
 
@@ -351,6 +363,40 @@ test("connect() duplicate socket", async () => {
     assert.strictEqual(wsInstances.length, initialLength + 1);
   } finally {
     sw.setSocket(null);
+  }
+});
+
+test("connect() serializes concurrent connection attempts", async () => {
+  const originalFetch = (globalThis as any).fetch;
+  const initialLength = wsInstances.length;
+  let releaseConnection!: () => void;
+  const connectionReady = new Promise<void>((resolve) => {
+    releaseConnection = resolve;
+  });
+  sw.setSocket(null);
+  try {
+    (globalThis as any).fetch = async (url: string) => {
+      if (url.endsWith("connection.json")) {
+        await connectionReady;
+        return {
+          json: async () => mockConnectionData,
+        };
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    };
+
+    const attempts = [sw.connect(), sw.connect(), sw.connect()];
+    releaseConnection();
+    await Promise.all(attempts);
+
+    assert.strictEqual(
+      wsInstances.length,
+      initialLength + 1,
+      "Concurrent wake events should share one connection attempt",
+    );
+  } finally {
+    sw.setSocket(null);
+    (globalThis as any).fetch = originalFetch;
   }
 });
 

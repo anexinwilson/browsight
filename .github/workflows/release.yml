@@ -42,20 +42,18 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Snyk SCA (dependencies)
         uses: snyk/actions/node@master
-        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           command: test
-          args: --all-projects --sarif-file-output=snyk-sca.sarif
+          args: --all-projects --severity-threshold=high --sarif-file-output=snyk-sca.sarif
       - name: Snyk SAST (code)
         uses: snyk/actions/node@master
-        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           command: code test
-          args: --sarif-file-output=snyk-sast.sarif
+          args: --severity-threshold=high --sarif-file-output=snyk-sast.sarif
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:

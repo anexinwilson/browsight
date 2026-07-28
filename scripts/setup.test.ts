@@ -145,7 +145,7 @@ test("runSetup generates token/port and writes config files", async () => {
   }
 
   // Assertions
-  assert.match(stdoutOutput, /✓ browsight is configured/);
+  assert.match(stdoutOutput, /\[ok\] browsight is configured/);
 
   // Check that bridge.json was written
   const bridgeJson = JSON.parse(readFileSync(join(tempHome, ".browsight", "bridge.json"), "utf8"));
@@ -188,7 +188,7 @@ test("runDoctor checks status of configuration", async () => {
   }
 
   // Assertions
-  assert.match(stdoutOutput, /✗ bridge config written/);
+  assert.match(stdoutOutput, /\[missing\] bridge config written/);
   assert.match(stdoutOutput, /Next: fix/);
 
   // Clean up
@@ -221,7 +221,7 @@ test("runDoctor checks status of successful setup", async () => {
   }
 
   // Assertions
-  assert.match(stdoutOutput, /✓ bridge config written/);
+  assert.match(stdoutOutput, /\[ok\] bridge config written/);
 
   // Clean up
   rmSync(tempHome, { recursive: true, force: true });
@@ -258,15 +258,15 @@ test("readJson recovery from malformed JSON", () => {
   rmSync(tempHome, { recursive: true, force: true });
 });
 
-test("tomlString escaped quotes coverage (single quotes path, double quotes arg)", () => {
-  // 1. Single quotes path (contains single quote, so wrapped in double quotes)
+test("browsightCodexBlock quotes TOML paths and arguments safely", () => {
+  // A value containing a single quote must use an escaped basic string.
   const block1 = browsightCodexBlock({
     command: "C:\\path'with'quote",
     args: [],
   });
   assert.match(block1, /command = "C:\\\\path'with'quote"/);
 
-  // 2. Double quotes arg (contains double quote, but NO single quote, so wrapped in single quotes)
+  // Double quotes can remain inside a TOML literal string.
   const block2 = browsightCodexBlock({
     command: "node",
     args: ['"double-quoted-arg"', 'arg"with"double'],
@@ -278,7 +278,7 @@ test("CLI entry point integration - setup and doctor execution", async () => {
   const tempHome = createTempHome();
   const REPO_ROOT = join(import.meta.dirname, "..");
 
-  // 1. Run setup CLI
+  // Run setup through its public CLI entry point.
   const childSetup = spawn(process.execPath, [join(REPO_ROOT, "scripts", "setup.ts")], {
     env: {
       ...process.env,
@@ -293,7 +293,7 @@ test("CLI entry point integration - setup and doctor execution", async () => {
   });
   assert.equal(setupExit, 0);
 
-  // 2. Run doctor CLI
+  // Verify the doctor command against the setup output.
   const childDoctor = spawn(process.execPath, [join(REPO_ROOT, "scripts", "setup.ts"), "doctor"], {
     env: {
       ...process.env,
@@ -312,18 +312,15 @@ test("CLI entry point integration - setup and doctor execution", async () => {
     childDoctor.on("close", resolve);
   });
   assert.equal(doctorExit, 0);
-  assert.match(doctorStdout, /✓ bridge config written/);
+  assert.match(doctorStdout, /\[ok\] bridge config written/);
 
-  // Clean up
   rmSync(tempHome, { recursive: true, force: true });
 });
-
-// Additional coverage tests
 
 test("mcpNpxEntry returns correct command structure", () => {
   const entry = mcpNpxEntry();
   assert.equal(entry.command, "npx");
-  assert.deepEqual(entry.args, ["-y", "browsight"]);
+  assert.deepEqual(entry.args, ["-y", "browsight", "serve"]);
 });
 
 test("tomlString fully escapes quotes and backslashes when single quotes are present", () => {
@@ -429,6 +426,30 @@ test("runSetup reuse of existing token, port, and host", async () => {
   }
 });
 
+test("runSetup can move a stale installation to a fresh port", async () => {
+  const tempHome = createTempHome();
+  const originalHome = process.env.BROWSIGHT_HOME;
+  process.env.BROWSIGHT_HOME = tempHome;
+  const configDir = join(tempHome, ".browsight");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(
+    join(configDir, "bridge.json"),
+    JSON.stringify({ host: "127.0.0.1", port: 60928, token: "keep-this-token" }),
+  );
+  const originalWrite = process.stdout.write;
+  process.stdout.write = () => true;
+  try {
+    await runSetup({ newPort: true });
+    const updated = JSON.parse(readFileSync(join(configDir, "bridge.json"), "utf8"));
+    assert.notEqual(updated.port, 60928);
+    assert.equal(updated.token, "keep-this-token");
+  } finally {
+    process.stdout.write = originalWrite;
+    process.env.BROWSIGHT_HOME = originalHome;
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
 test("runSetup when client config file exists but its directory marker is also present", async () => {
   const tempHome = createTempHome();
   const originalHome = process.env.BROWSIGHT_HOME;
@@ -498,7 +519,7 @@ test("runDoctor checks status of configuration with only Codex registered", asyn
     rmSync(tempHome, { recursive: true, force: true });
   }
 
-  assert.match(stdoutOutput, /✓ MCP server registered in a client config/);
+  assert.match(stdoutOutput, /\[ok\] MCP server registered in a client config/);
 });
 
 test("runDoctor when Codex config exists but is not registered", async () => {
@@ -524,7 +545,7 @@ test("runDoctor when Codex config exists but is not registered", async () => {
     rmSync(tempHome, { recursive: true, force: true });
   }
 
-  assert.match(stdoutOutput, /✗ MCP server registered in a client config/);
+  assert.match(stdoutOutput, /\[missing\] MCP server registered in a client config/);
 });
 
 test("runDoctor when client config exists but lacks mcpServers key", async () => {
@@ -550,7 +571,7 @@ test("runDoctor when client config exists but lacks mcpServers key", async () =>
     rmSync(tempHome, { recursive: true, force: true });
   }
 
-  assert.match(stdoutOutput, /✗ MCP server registered in a client config/);
+  assert.match(stdoutOutput, /\[missing\] MCP server registered in a client config/);
 });
 
 test("runDoctor secondary manifest and connection check when EXTENSION_DIST_SRC is missing", () => {
@@ -599,8 +620,8 @@ test("runDoctor secondary manifest and connection check when EXTENSION_DIST_SRC 
     rmSync(tempHome, { recursive: true, force: true });
   }
 
-  assert.match(stdoutOutput, /✓ extension built/);
-  assert.match(stdoutOutput, /✓ extension connection\.json written/);
+  assert.match(stdoutOutput, /\[ok\] extension built/);
+  assert.match(stdoutOutput, /\[ok\] extension connection\.json written/);
 });
 
 test("runDoctor when extension build and connection files are completely missing", () => {
@@ -634,8 +655,8 @@ test("runDoctor when extension build and connection files are completely missing
     rmSync(tempHome, { recursive: true, force: true });
   }
 
-  assert.match(stdoutOutput, /✗ extension built/);
-  assert.match(stdoutOutput, /✗ extension connection\.json written/);
+  assert.match(stdoutOutput, /\[missing\] extension built/);
+  assert.match(stdoutOutput, /\[missing\] extension connection\.json written/);
 });
 
 test("runDoctor executes safely when BROWSIGHT_HOME is undefined", () => {
@@ -685,7 +706,7 @@ test("CLI entry point setup failure catch block", async () => {
   rmSync(tempHome, { recursive: true, force: true });
 });
 
-test("isNpxContext and isCompiled true branches coverage in child process", async () => {
+test("setup detects npx cache and compiled execution paths", async () => {
   const tempHome1 = createTempHome();
   const tempHome2 = createTempHome();
   const REPO_ROOT = join(import.meta.dirname, "..");
@@ -693,7 +714,7 @@ test("isNpxContext and isCompiled true branches coverage in child process", asyn
   mkdirSync(join(tempHome1, ".codex"), { recursive: true });
   mkdirSync(join(tempHome2, ".codex"), { recursive: true });
 
-  // 1. Run simulating _npx
+  // Simulate execution from an npx cache path.
   const child1 = spawn(
     process.execPath,
     ["--import", "./scripts/mock_helper.ts", join(REPO_ROOT, "scripts", "setup.ts")],

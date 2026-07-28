@@ -6,7 +6,7 @@
  */
 import type { ActRequest, Diff, Ref, Sentinel, SentinelKind, Verdict } from "@browsight/shared";
 import { type Grant, decideAccess } from "../permissions/policy.ts";
-import { listGrants } from "../permissions/storage.ts";
+import { listGrants, touchGrant } from "../permissions/storage.ts";
 import { type Send, currentTab, originOf } from "./common.ts";
 
 interface ActContentResult {
@@ -14,6 +14,143 @@ interface ActContentResult {
   readonly diff: Diff;
   readonly refs: Ref[];
   readonly sentinel?: Sentinel;
+}
+
+const SCRIPT_INJECTION_TIMEOUT_MS = 3_000;
+const CONTENT_ACTION_TIMEOUT_MS = 15_000;
+const NAVIGATION_TIMEOUT_MS = 8_000;
+
+export class ActionTimeoutError extends Error {
+  readonly stage: string;
+  readonly timeoutMs: number;
+
+  constructor(stage: string, timeoutMs: number) {
+    super(`${stage} timed out after ${timeoutMs} ms`);
+    this.name = "ActionTimeoutError";
+    this.stage = stage;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+export async function withDeadline<T>(
+  promise: Promise<T>,
+  stage: string,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ActionTimeoutError(stage, timeoutMs)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function isActContentResult(value: unknown): value is ActContentResult {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const result = value as Partial<ActContentResult>;
+  return (
+    typeof result.verdict === "string" &&
+    typeof result.diff === "object" &&
+    Array.isArray(result.refs)
+  );
+}
+
+async function sendContentAct(tabId: number, msg: ActRequest): Promise<ActContentResult> {
+  const actionMessage = {
+    kind: "act",
+    ref: msg.ref,
+    action: msg.action,
+    value: msg.value,
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) {
+      await withDeadline(
+        chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }),
+        "content-script injection",
+        SCRIPT_INJECTION_TIMEOUT_MS,
+      );
+    }
+    let result: unknown;
+    try {
+      result = await withDeadline(
+        chrome.tabs.sendMessage(tabId, actionMessage),
+        "page action",
+        CONTENT_ACTION_TIMEOUT_MS,
+      );
+    } catch (error: unknown) {
+      if (
+        attempt === 0 &&
+        /Receiving end does not exist|Could not establish connection/i.test(String(error))
+      ) {
+        continue;
+      }
+      throw error;
+    }
+    if (isActContentResult(result)) {
+      return result;
+    }
+  }
+  throw new Error("the page content script did not return an action result");
+}
+
+function tabIsReady(tab: chrome.tabs.Tab | undefined): tab is chrome.tabs.Tab {
+  return Boolean(tab && tab.status !== "loading");
+}
+
+async function waitForTabReady(
+  tabId: number,
+  start: () => Promise<chrome.tabs.Tab | undefined>,
+): Promise<chrome.tabs.Tab> {
+  const onUpdated = chrome.tabs.onUpdated;
+  if (!onUpdated?.addListener || !onUpdated.removeListener) {
+    await start();
+    return chrome.tabs.get(tabId);
+  }
+
+  return withDeadline(
+    new Promise<chrome.tabs.Tab>((resolve, reject) => {
+      const finish = (tab: chrome.tabs.Tab): void => {
+        onUpdated.removeListener(listener);
+        resolve(tab);
+      };
+      const listener = (
+        updatedTabId: number,
+        changeInfo: chrome.tabs.TabChangeInfo,
+        tab: chrome.tabs.Tab,
+      ): void => {
+        if (updatedTabId === tabId && (changeInfo.status === "complete" || tabIsReady(tab))) {
+          finish(tab);
+        }
+      };
+      onUpdated.addListener(listener);
+      start()
+        .then(async (tab) => {
+          const observed = tab ?? (await chrome.tabs.get(tabId));
+          if (tabIsReady(observed)) {
+            finish(observed);
+          }
+        })
+        .catch((error: unknown) => {
+          onUpdated.removeListener(listener);
+          reject(error);
+        });
+    }),
+    "navigation",
+    NAVIGATION_TIMEOUT_MS,
+  );
+}
+
+async function waitForExistingNavigation(tabId: number): Promise<chrome.tabs.Tab> {
+  return waitForTabReady(tabId, () => chrome.tabs.get(tabId));
 }
 
 async function handleNavigate(
@@ -25,7 +162,10 @@ async function handleNavigate(
   now: number,
 ): Promise<void> {
   if (value === "reload" || value === "refresh") {
-    await chrome.tabs.reload(tabId);
+    await waitForTabReady(tabId, async () => {
+      await chrome.tabs.reload(tabId);
+      return undefined;
+    });
     send({
       type: "act.response",
       id,
@@ -49,10 +189,81 @@ async function handleNavigate(
     );
     return;
   }
-  await chrome.tabs.update(tabId, { url: value });
+  const destination = await waitForTabReady(tabId, () => chrome.tabs.update(tabId, { url: value }));
+  const destinationOrigin = destination.url ? originOf(destination.url) : target;
+  if (!decideAccess(grants, destinationOrigin, Date.now()).read) {
+    sendActSentinel(
+      send,
+      id,
+      "not_whitelisted",
+      `the page navigated to ${destinationOrigin}, which is not whitelisted — allow it in the browsight popup to continue.`,
+    );
+    return;
+  }
   send({
     type: "act.response",
     id,
+    verdict: "navigated",
+    diff: { appeared: [], removed: [], changed: [] },
+    refs: [],
+  });
+}
+
+interface ContentActFailureContext {
+  readonly send: Send;
+  readonly msg: ActRequest;
+  readonly tabId: number;
+  readonly originalUrl: string;
+  readonly origin: string;
+  readonly grants: Grant[];
+  readonly now: number;
+}
+
+async function handleContentActFailure(
+  context: ContentActFailureContext,
+  error: unknown,
+): Promise<void> {
+  const { send, msg, tabId, originalUrl, origin, grants, now } = context;
+  if (error instanceof ActionTimeoutError) {
+    const moved = await currentTab();
+    if (!moved?.url || moved.url === originalUrl) {
+      sendActSentinel(send, msg.id, "frame_unreachable", error.message);
+      return;
+    }
+  }
+  const message = String(error);
+  const navigatedAway =
+    /back\/forward cache|message channel closed|message port closed|Receiving end does not exist/i;
+  if (!(error instanceof ActionTimeoutError) && !navigatedAway.test(message)) {
+    sendActSentinel(send, msg.id, "frame_unreachable", `could not act on the page: ${message}`);
+    return;
+  }
+
+  try {
+    await waitForExistingNavigation(tabId);
+  } catch (navigationError: unknown) {
+    if (!(navigationError instanceof ActionTimeoutError)) {
+      throw navigationError;
+    }
+    sendActSentinel(send, msg.id, "frame_unreachable", navigationError.message);
+    return;
+  }
+
+  // A navigation must not silently move the agent onto an origin the user has not allowed.
+  const moved = await currentTab();
+  const newOrigin = moved?.url ? originOf(moved.url) : "";
+  if (newOrigin && newOrigin !== origin && !decideAccess(grants, newOrigin, now).read) {
+    sendActSentinel(
+      send,
+      msg.id,
+      "not_whitelisted",
+      `the page navigated to ${newOrigin}, which is not whitelisted — allow it in the browsight popup to continue.`,
+    );
+    return;
+  }
+  send({
+    type: "act.response",
+    id: msg.id,
     verdict: "navigated",
     diff: { appeared: [], removed: [], changed: [] },
     refs: [],
@@ -77,19 +288,23 @@ export async function handleAct(send: Send, msg: ActRequest): Promise<void> {
     );
     return;
   }
+  await touchGrant(origin);
 
   if (msg.action === "navigate") {
-    return handleNavigate(send, msg.id, msg.value, tab.id, grants, now);
+    try {
+      await handleNavigate(send, msg.id, msg.value, tab.id, grants, now);
+    } catch (error: unknown) {
+      const hint =
+        error instanceof ActionTimeoutError
+          ? error.message
+          : `could not navigate the page: ${String(error)}`;
+      sendActSentinel(send, msg.id, "frame_unreachable", hint);
+    }
+    return;
   }
 
   try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-    const result = (await chrome.tabs.sendMessage(tab.id, {
-      kind: "act",
-      ref: msg.ref,
-      action: msg.action,
-      value: msg.value,
-    })) as ActContentResult;
+    const result = await sendContentAct(tab.id, msg);
     send({
       type: "act.response",
       id: msg.id,
@@ -98,37 +313,11 @@ export async function handleAct(send: Send, msg: ActRequest): Promise<void> {
       refs: result.refs,
       ...(result.sentinel ? { sentinel: result.sentinel } : {}),
     });
-  } catch (err) {
-    const message = String(err);
-    // A click or submit that navigates tears down the content script before it can reply, so the
-    // message channel closes. Report that as a clean "navigated" result instead of a raw error —
-    // the next browser_read will see the new page.
-    const navigatedAway =
-      /back\/forward cache|message channel closed|message port closed|Receiving end does not exist/i;
-    if (navigatedAway.test(message)) {
-      // If the click drove the tab to an origin the user hasn't whitelisted, say so — a link click
-      // must not quietly move the agent somewhere it has no grant for.
-      const moved = await currentTab();
-      const newOrigin = moved?.url ? originOf(moved.url) : "";
-      if (newOrigin && newOrigin !== origin && !decideAccess(grants, newOrigin, now).read) {
-        sendActSentinel(
-          send,
-          msg.id,
-          "not_whitelisted",
-          `the page navigated to ${newOrigin}, which is not whitelisted — allow it in the browsight popup to continue.`,
-        );
-        return;
-      }
-      send({
-        type: "act.response",
-        id: msg.id,
-        verdict: "navigated",
-        diff: { appeared: [], removed: [], changed: [] },
-        refs: [],
-      });
-      return;
-    }
-    sendActSentinel(send, msg.id, "frame_unreachable", `could not act on the page: ${message}`);
+  } catch (error) {
+    await handleContentActFailure(
+      { send, msg, tabId: tab.id, originalUrl: tab.url, origin, grants, now },
+      error,
+    );
   }
 }
 

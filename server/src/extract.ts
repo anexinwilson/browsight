@@ -4,13 +4,10 @@
  * touch no I/O so they are the easiest and most valuable part of the pipeline to test.
  */
 
-// S8786: Split into a simple tag-matcher (no nested quantifiers) + a code-level type check in
-// stripSecrets, which eliminates the backtracking hazard from the original nested `[^>]*` groups.
+// Match the tag first and inspect its type separately to avoid an expensive nested expression.
 const INPUT_TAG = /<input\b[^>]+>/gi;
 const PASSWORD_TYPE = /\btype=["']password["']/i;
-// S8786: Two explicit, non-overlapping alternatives instead of a mixed ["'] character class.
 const VALUE_ATTR = /\bvalue="[^"]*"|\bvalue='[^']*'/gi;
-// S8786: Use [ \t]+ instead of \s+ to avoid matching newlines and reduce backtracking surface.
 const BEARER = /\bBearer[ \t]+[a-z0-9._-]+/gi;
 // Common secret shapes: Stripe/OpenAI-style keys (hyphen or underscore), GitHub tokens, AWS access
 // keys, Slack tokens, Google API keys, and JWTs.
@@ -26,8 +23,7 @@ const KEY_PATTERNS = [
 /** Strip password-field values and common key/token shapes so secrets never reach the model. */
 export function stripSecrets(input: string): string {
   let out = input;
-  // Two-step: first find any <input> tag, then check in code whether it is a password input.
-  // This avoids nested quantifiers inside a single regex (S8786).
+  // Check password type in code after matching each input tag.
   out = out.replace(INPUT_TAG, (tag) =>
     PASSWORD_TYPE.test(tag) ? tag.replace(VALUE_ATTR, 'value="[stripped]"') : tag,
   );

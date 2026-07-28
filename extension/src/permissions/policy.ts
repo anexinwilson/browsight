@@ -8,8 +8,10 @@ export type Tier = "read" | "full";
 export interface Grant {
   readonly origin: string;
   readonly tier: Tier;
-  /** Epoch ms at which the grant expires, or `null` for a persistent grant. */
+  /** Epoch ms at which an inactive grant expires, or `null` for a persistent grant. */
   readonly expiresAt: number | null;
+  /** Sliding inactivity window. Older stored grants omit this and retain fixed-expiry behavior. */
+  readonly idleTimeoutMs?: number | null;
 }
 
 export interface Access {
@@ -30,7 +32,7 @@ export function decideAccess(grants: readonly Grant[], origin: string, now: numb
   return { read: true, act: grant.tier === "full" };
 }
 
-/** Available expiry durations for a grant, in milliseconds (or `null` for never). */
+/** Available inactivity durations for a grant, in milliseconds (or `null` for never). */
 export const TIMER_OPTIONS: ReadonlyArray<{ label: string; ms: number | null }> = [
   { label: "1 hour", ms: 60 * 60 * 1000 },
   { label: "2 hours", ms: 2 * 60 * 60 * 1000 },
