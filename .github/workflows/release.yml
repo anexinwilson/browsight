@@ -41,14 +41,14 @@ jobs:
           node-version: 24
       - run: npm ci --ignore-scripts
       - name: Snyk SCA (dependencies)
-        uses: snyk/actions/node@master
+        uses: snyk/actions/node@8e119fbb6c251787721d34ba683ed48eba792766
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           command: test
           args: --all-projects --severity-threshold=high --sarif-file-output=snyk-sca.sarif
       - name: Snyk SAST (code)
-        uses: snyk/actions/node@master
+        uses: snyk/actions/node@8e119fbb6c251787721d34ba683ed48eba792766
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
@@ -76,7 +76,7 @@ jobs:
         with:
           name: coverage-report
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v8.1.0
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995
         with:
           args: >
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
@@ -98,7 +98,7 @@ jobs:
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Publish to npm with Provenance
         run: npm publish --provenance --access public

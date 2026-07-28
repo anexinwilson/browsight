@@ -27,6 +27,40 @@ function realmOf(el: Element): typeof globalThis {
   return (el.ownerDocument.defaultView ?? globalThis) as unknown as typeof globalThis;
 }
 
+function dispatchEnter(el: Element): void {
+  const realm = realmOf(el);
+  el.dispatchEvent(
+    new realm.KeyboardEvent("keydown", {
+      bubbles: true,
+      composed: true,
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+    }),
+  );
+  el.dispatchEvent(
+    new realm.KeyboardEvent("keypress", {
+      bubbles: true,
+      composed: true,
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+    }),
+  );
+  el.dispatchEvent(
+    new realm.KeyboardEvent("keyup", {
+      bubbles: true,
+      composed: true,
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+    }),
+  );
+}
+
 function tagName(el: Element): string {
   return el.tagName.toLowerCase();
 }
@@ -319,37 +353,7 @@ function tryPerformFill(
   if (isTextControl(el)) {
     fillValue(el, actualValue);
     if (pressEnter) {
-      const realm = realmOf(el);
-      el.dispatchEvent(
-        new realm.KeyboardEvent("keydown", {
-          bubbles: true,
-          composed: true,
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-        }),
-      );
-      el.dispatchEvent(
-        new realm.KeyboardEvent("keypress", {
-          bubbles: true,
-          composed: true,
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-        }),
-      );
-      el.dispatchEvent(
-        new realm.KeyboardEvent("keyup", {
-          bubbles: true,
-          composed: true,
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-        }),
-      );
+      dispatchEnter(el);
     }
     return { kind: "success", valueSet: el.value === actualValue };
   }
@@ -359,37 +363,7 @@ function tryPerformFill(
   if ((el as HTMLElement).isContentEditable) {
     const success = fillEditable(el as HTMLElement, actualValue);
     if (pressEnter) {
-      const realm = realmOf(el);
-      el.dispatchEvent(
-        new realm.KeyboardEvent("keydown", {
-          bubbles: true,
-          composed: true,
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-        }),
-      );
-      el.dispatchEvent(
-        new realm.KeyboardEvent("keypress", {
-          bubbles: true,
-          composed: true,
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-        }),
-      );
-      el.dispatchEvent(
-        new realm.KeyboardEvent("keyup", {
-          bubbles: true,
-          composed: true,
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-        }),
-      );
+      dispatchEnter(el);
     }
     return { kind: "success", valueSet: success };
   }
