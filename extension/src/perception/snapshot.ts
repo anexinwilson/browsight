@@ -32,6 +32,43 @@ const BLOCK_TAGS = new Set([
   "table",
   "br",
 ]);
+const MAX_SNAPSHOT_CHARS = 16_000;
+export type SnapshotMode = "full" | "main";
+
+function activeDialogRoot(doc: Document): Element | null {
+  const active = doc.activeElement;
+  const dialogs = Array.from(
+    doc.querySelectorAll("dialog[open], [role='dialog'], [aria-modal='true']"),
+  ).filter((element) => !isHidden(element));
+  if (active !== null && active !== doc.body) {
+    const focusedDialog = dialogs.findLast((element) => element.contains(active));
+    if (focusedDialog) {
+      return focusedDialog;
+    }
+  }
+  return (
+    dialogs.findLast((element) => element.matches("dialog[open], [aria-modal='true']")) ?? null
+  );
+}
+
+function primaryContentRoot(doc: Document): Element | null {
+  const candidates = Array.from(doc.querySelectorAll("main, [role='main']"));
+  let best: { readonly element: Element; readonly score: number } | null = null;
+  for (const element of candidates) {
+    if (isHidden(element)) {
+      continue;
+    }
+    const text = (element.textContent ?? "").trim().length;
+    const controls = element.querySelectorAll(
+      "a[href], button, input, select, textarea, [contenteditable='true']",
+    ).length;
+    const score = text + controls * 80;
+    if (!best || score > best.score) {
+      best = { element, score };
+    }
+  }
+  return best?.element ?? null;
+}
 
 /** Build the semantic snapshot of `doc` (the live document by default). */
 class SnapshotBuilder {
@@ -43,23 +80,42 @@ class SnapshotBuilder {
   hasPasswordField = false;
   lastRefName = "";
   elements = new Map<number, Element>();
+  truncated = false;
+  outputChars = 0;
 
-  private doc: Document;
+  private readonly doc: Document;
 
-  constructor(doc: Document) {
+  private readonly mode: SnapshotMode;
+
+  constructor(doc: Document, mode: SnapshotMode) {
     this.doc = doc;
+    this.mode = mode;
   }
 
   build(): SnapshotResult {
     const title = this.doc.title.trim();
     if (title) {
-      this.out.push(`# ${title}`);
+      this.emit(`# ${title}`);
     }
 
-    if (this.doc.body) {
-      this.walk(this.doc.body);
+    const dialog = activeDialogRoot(this.doc);
+    const primary = !dialog && this.mode === "main" ? primaryContentRoot(this.doc) : null;
+    if (dialog) {
+      this.emit("[focused on active dialog]");
+    } else if (this.mode === "main") {
+      this.emit(
+        primary ? "[focused on primary content]" : "[no primary landmark; showing full page]",
+      );
+    }
+    const root = dialog ?? primary ?? this.doc.body;
+    if (root) {
+      this.walk(root);
     }
     this.flush();
+
+    if (this.truncated) {
+      this.out.push("[snapshot truncated; narrow the page or scroll to inspect more]");
+    }
 
     const markdown = this.out
       .join("\n")
@@ -73,6 +129,17 @@ class SnapshotBuilder {
     };
   }
 
+  private emit(text: string): boolean {
+    const cost = text.length + (this.out.length > 0 ? 1 : 0);
+    if (this.outputChars + cost > MAX_SNAPSHOT_CHARS) {
+      this.truncated = true;
+      return false;
+    }
+    this.out.push(text);
+    this.outputChars += cost;
+    return true;
+  }
+
   private flush(): void {
     const text = this.line
       .replace(/[ \t\n\r]+/g, " ")
@@ -80,7 +147,7 @@ class SnapshotBuilder {
       .replace(/[ \t\n\r]+/g, " ")
       .trim();
     if (text) {
-      this.out.push(text);
+      this.emit(text);
       this.lastRefName = "";
     }
     this.line = "";
@@ -96,6 +163,9 @@ class SnapshotBuilder {
     this.ordinals.set(ordinalKey, ordinal + 1);
     const id = this.nextId++;
     const state = elementState(el);
+    if (!this.emit(`[${role} ${JSON.stringify(name)} #${id}]`)) {
+      return;
+    }
     this.refs.push({
       id,
       role,
@@ -104,7 +174,6 @@ class SnapshotBuilder {
       ...(state ? { state } : {}),
     });
     this.elements.set(id, el);
-    this.out.push(`[${role} ${JSON.stringify(name)} #${id}]`);
     this.lastRefName = name;
     if (isComposite(el)) {
       for (const child of Array.from(el.childNodes)) {
@@ -130,7 +199,7 @@ class SnapshotBuilder {
     }
     directText = directText.replace(/[ \t\n\r]+/g, " ").trim();
     if (directText) {
-      this.out.push(`${"#".repeat(level)} ${directText}`);
+      this.emit(`${"#".repeat(level)} ${directText}`);
     }
     this.lastRefName = "";
     for (const child of Array.from(el.childNodes)) {
@@ -151,7 +220,7 @@ class SnapshotBuilder {
     if (frameDoc?.body) {
       this.walk(frameDoc.body);
     } else {
-      this.out.push("[unreadable frame (cross-origin)]");
+      this.emit("[unreadable frame (cross-origin)]");
     }
   }
 
@@ -166,7 +235,7 @@ class SnapshotBuilder {
   }
 
   private isPasswordField(el: Element): boolean {
-    return el instanceof HTMLInputElement && el.type === "password";
+    return el.tagName.toLowerCase() === "input" && (el as HTMLInputElement).type === "password";
   }
 
   private handleInteractiveOrSpecial(el: Element, tag: string): boolean {
@@ -178,8 +247,8 @@ class SnapshotBuilder {
       this.handleHeading(el, tag);
       return true;
     }
-    if (el instanceof HTMLIFrameElement) {
-      this.handleIframe(el);
+    if (tag === "iframe") {
+      this.handleIframe(el as HTMLIFrameElement);
       return true;
     }
     return false;
@@ -197,6 +266,9 @@ class SnapshotBuilder {
   }
 
   private walk(node: Node): void {
+    if (this.truncated) {
+      return;
+    }
     if (node.nodeType === Node.TEXT_NODE) {
       this.line += ` ${node.textContent ?? ""}`;
       return;
@@ -226,6 +298,9 @@ class SnapshotBuilder {
 }
 
 /** Build the semantic snapshot of `doc` (the live document by default). */
-export function buildSnapshot(doc: Document = document): SnapshotResult {
-  return new SnapshotBuilder(doc).build();
+export function buildSnapshot(
+  doc: Document = document,
+  options: { readonly mode?: SnapshotMode } = {},
+): SnapshotResult {
+  return new SnapshotBuilder(doc, options.mode ?? "full").build();
 }

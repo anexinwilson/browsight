@@ -1,7 +1,12 @@
 node_modules/
 dist/
 *.tsbuildinfo
+*.tgz
+coverage.txt
+coverage_output.txt
+lcov.info
 .DS_Store
 Thumbs.db
 scratch/
 .browsight/
+.agents/

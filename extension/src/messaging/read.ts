@@ -5,10 +5,14 @@
  */
 import type { SentinelKind } from "@browsight/shared";
 import { decideAccess } from "../permissions/policy.ts";
-import { listGrants } from "../permissions/storage.ts";
+import { listGrants, touchGrant } from "../permissions/storage.ts";
 import { type Send, currentTab, originOf, readTabContent, setCurrentTab } from "./common.ts";
 
-export async function handleRead(send: Send, id: string): Promise<void> {
+export async function handleRead(
+  send: Send,
+  id: string,
+  mode: "full" | "main" = "full",
+): Promise<void> {
   // Operate on the tab the agent is driving (set by the last read or tab-switch), falling back to the
   // focused tab only when none is recorded yet. This makes read/act consistent and immune to OS focus
   // being on another window entirely (e.g. the service-worker devtools).
@@ -33,8 +37,9 @@ export async function handleRead(send: Send, id: string): Promise<void> {
     );
     return;
   }
+  await touchGrant(origin);
   try {
-    const snap = await readTabContent(tab.id);
+    const snap = await readTabContent(tab.id, mode);
     send({
       type: "read.response",
       id,

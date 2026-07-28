@@ -33,6 +33,28 @@ export async function saveGrants(grants: Grant[]): Promise<void> {
   await chrome.storage.local.set({ [STORAGE_KEY]: grants });
 }
 
+/** Renew one temporary grant after an authorized operation. Permanent and legacy fixed grants stay
+ * unchanged. This makes the visible timer an inactivity timer instead of expiring mid-session. */
+export async function touchGrant(origin: string, now = Date.now()): Promise<void> {
+  const grants = await listGrants();
+  let changed = false;
+  const renewed = grants.map((grant) => {
+    if (
+      grant.origin !== origin ||
+      grant.expiresAt === null ||
+      typeof grant.idleTimeoutMs !== "number" ||
+      grant.idleTimeoutMs <= 0
+    ) {
+      return grant;
+    }
+    changed = true;
+    return { ...grant, expiresAt: now + grant.idleTimeoutMs };
+  });
+  if (changed) {
+    await saveGrants(renewed);
+  }
+}
+
 /**
  * Add or replace a grant for an origin, requesting the matching Chrome host permission first.
  * Returns false (and saves nothing) if the user declines the browser prompt.

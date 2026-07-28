@@ -27,8 +27,10 @@ interface Pending {
 }
 
 export interface Bridge {
+  /** Resolves once the loopback socket is listening, or rejects when the configured port is busy. */
+  readonly ready: Promise<void>;
   /** Ask the extension to read the active tab, optionally navigating to `url` first. */
-  readActiveTab(url: string | null): Promise<ReadResponse>;
+  readActiveTab(url: string | null, mode?: "full" | "main"): Promise<ReadResponse>;
   /** Ask the extension to perform one action on the active tab. */
   actActiveTab(req: { ref: string; action: Action; value?: string }): Promise<ActResponse>;
   /** List the open tabs, optionally switching to (and reading) the one matching `select`. */
@@ -37,11 +39,23 @@ export interface Bridge {
 }
 
 /** Start the bridge server bound to loopback and return a small request API. */
-export function startBridge(opts: { readonly port: number; readonly token: string }): Bridge {
+export function startBridge(opts: {
+  readonly port: number;
+  readonly token: string;
+  readonly onAccessStatus?: (activeGrantCount: number) => void;
+}): Bridge {
   const wss = new WebSocketServer({ host: "127.0.0.1", port: opts.port, maxPayload: MAX_PAYLOAD });
   const pending = new Map<string, Pending>();
   let active: WebSocket | null = null;
   let listenError: string | null = null;
+  let resolveReady!: () => void;
+  let rejectReady!: (err: Error) => void;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  wss.once("listening", () => resolveReady());
 
   // If the port is already taken — almost always a second browsight server launched by another MCP
   // client — the server emits 'error'. Handle it so the process degrades with a clear message instead
@@ -54,7 +68,7 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
       code === "EADDRINUSE"
         ? `another browsight instance is already using 127.0.0.1:${opts.port} — only one client can drive browsight at a time; close it in the other client, or drive browsight from there.`
         : `the browsight bridge could not start: ${err.message}`;
-    process.stderr.write(`browsight: ${listenError}\n`);
+    rejectReady(new Error(listenError));
   });
 
   wss.on("connection", (ws) => {
@@ -77,8 +91,12 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
       if (!authed) {
         if (msg.type === "auth" && tokensMatch(msg.token, opts.token)) {
           authed = true;
+          const previous = active;
           active = ws;
           clearTimeout(authTimer);
+          if (previous && previous !== ws) {
+            previous.close(1000, "replaced by a newer extension connection");
+          }
         } else {
           ws.close(1008, "unauthorized");
         }
@@ -86,7 +104,9 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
       }
       // Already authenticated — fall through to response handling below.
 
-      if (
+      if (msg.type === "access.status") {
+        opts.onAccessStatus?.(msg.activeGrantCount);
+      } else if (
         msg.type === "read.response" ||
         msg.type === "act.response" ||
         msg.type === "tabs.response"
@@ -103,6 +123,7 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
     ws.on("close", () => {
       if (active === ws) {
         active = null;
+        opts.onAccessStatus?.(0);
         // Fail any in-flight requests immediately rather than letting them wait out the full
         // timeout — the MV3 service worker can be evicted mid-request.
         for (const [id, p] of pending) {
@@ -134,9 +155,10 @@ export function startBridge(opts: { readonly port: number; readonly token: strin
   }
 
   return {
-    async readActiveTab(url) {
+    ready,
+    async readActiveTab(url, mode = "full") {
       const id = randomUUID();
-      const res = await request({ type: "read.request", id, url, schema: null }, id);
+      const res = await request({ type: "read.request", id, url, mode, schema: null }, id);
       return res as ReadResponse;
     },
     async actActiveTab(req) {

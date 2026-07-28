@@ -11,18 +11,18 @@ const fakeScriptPath = process.env.MOCK_CACHE_NODE
 
 urlMod.fileURLToPath = (url: string | URL) => {
   const stack = new Error().stack;
-  if (fakeScriptPath && stack && stack.includes("setup.ts:84")) {
+  if (stack?.includes("setup.ts:84")) {
     return fakeScriptPath;
   }
   return originalFileURLToPath(url);
 };
 
-// Restore the original fileURLToPath on exit to ensure correct coverage path resolution
+// Restore the Node implementation before the child process exits.
 process.on("exit", () => {
   urlMod.fileURLToPath = originalFileURLToPath;
 });
 
-// Mock process.argv[1] to be undefined during evaluation of setup.ts to cover isMain false branch
+// Import setup as a module rather than executing its CLI entry point.
 const originalArgv1 = process.argv[1];
 if (!process.env.IS_CHILD) {
   process.argv[1] = undefined as unknown as string;

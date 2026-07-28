@@ -111,6 +111,41 @@ test("content.ts handles 'act' message", async () => {
   assert.strictEqual(response.verdict, "dom_changed");
 });
 
+test("content.ts accepts viewport scroll with an empty element reference", async () => {
+  const listener = listeners[0];
+  let response: any = null;
+  const before = performActMock.mock.calls.length;
+  const result = listener(
+    { kind: "act", ref: "", action: "scroll", value: "down" },
+    {},
+    (res: any) => {
+      response = res;
+    },
+  );
+
+  assert.strictEqual(result, true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(performActMock.mock.calls[before].arguments, ["", "scroll", "down"]);
+  assert.strictEqual(response.verdict, "dom_changed");
+});
+
+test("content.ts converts rejected page actions into a typed failure", async () => {
+  const listener = listeners[0];
+  let response: any = null;
+  performActMock.mock.mockImplementationOnce(async () => {
+    throw new Error("frame disappeared");
+  });
+  const result = listener({ kind: "act", ref: "btn-2", action: "click" }, {}, (res: any) => {
+    response = res;
+  });
+
+  assert.strictEqual(result, true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.strictEqual(response.verdict, "no_change");
+  assert.strictEqual(response.sentinel.kind, "frame_unreachable");
+  assert.match(response.sentinel.hint, /frame disappeared/);
+});
+
 test("content.ts ignores unknown or incomplete messages", () => {
   const listener = listeners[0];
   let response: any = null;

@@ -6,7 +6,7 @@
  */
 import type { Sentinel, TabInfo, TabsRequest } from "@browsight/shared";
 import { decideAccess } from "../permissions/policy.ts";
-import { listGrants } from "../permissions/storage.ts";
+import { listGrants, touchGrant } from "../permissions/storage.ts";
 import { type Send, currentTab, originOf, readTabContent, setCurrentTab } from "./common.ts";
 import { accessLabel, resolveTabSelection } from "./tab-select.ts";
 
@@ -48,6 +48,7 @@ export async function handleTabs(send: Send, msg: TabsRequest): Promise<void> {
     return;
   }
   const target = resolution.tab;
+  await touchGrant(target.origin);
 
   try {
     const win = all.find((t) => t.id === target.id)?.windowId;

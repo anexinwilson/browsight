@@ -1,37 +1,46 @@
-# Contributing to browsight
+# Contributing to Browsight
 
-## Prerequisites
+## Local setup
 
-- Node 24 (LTS) — see `.nvmrc`.
-- Google Chrome.
+Install Node.js 24 and Google Chrome, then run:
 
-## Setup
-
-```
+```sh
 npm install
-npm run build        # builds the server and the extension
-npm run setup        # registers the server with your MCP client and prints the next steps
+npm run hooks # optional: enable the repository's pre-commit checks
+npm run build
+npm run setup
 ```
 
-Then load the extension into Chrome:
+The setup command copies the extension to `~/.browsight/extension`. Load that directory from `chrome://extensions` with Developer mode enabled.
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode** (top-right).
-3. Click **Load unpacked** and select `extension/dist`.
+## Quality checks
 
-Restart your MCP client; `browser_read` should now be available.
+Run all checks before opening a pull request:
 
-## Working in the repo
+```sh
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm pack --dry-run
+```
 
-- `npm run typecheck` — type-check all packages.
-- `npm test` — run unit tests (`node --test`).
-- `npm run lint` / `npm run format` — Biome.
+Temporary files, local fixtures, test configuration, and generated reports belong under the ignored `scratch/` directory. Do not add them to the repository root.
 
 ## Code conventions
 
-Enforced or expected throughout; see [docs/DESIGN.md](docs/DESIGN.md) §10 for the full list.
+- Use strict TypeScript and ESM.
+- Validate data at process boundaries.
+- Keep permission decisions in the extension, which is the component with page access.
+- Keep the bridge protocol in `shared/src/protocol.ts`.
+- Separate pure decision logic from browser, file-system, and network access.
+- Name tests after observable behavior rather than implementation lines or coverage targets.
+- Explain security decisions and browser workarounds in comments. Avoid comments that repeat the code.
 
-- TypeScript `strict`, no `any`; untrusted input validated with `zod` at the boundary.
-- ESM, named exports, one responsibility per file, pure logic separated from I/O.
-- The bridge protocol and tool schemas live once in `shared/src/protocol.ts`; types are inferred from the zod schemas.
-- Conventional Commits.
+The popup, options page, and service worker are bundled as ESM. The content script is bundled as an IIFE because Chrome injects it directly into pages.
+
+The WebSocket bridge must remain restricted to explicit loopback hosts and validated ports. Validate every incoming bridge message before dispatch.
+
+## Releases
+
+CI runs type checking, linting, tests, builds, static analysis, and dependency scanning. npm publishing uses trusted publishing with OIDC and provenance. Do not add long-lived npm publishing tokens.

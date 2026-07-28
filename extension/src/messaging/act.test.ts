@@ -59,7 +59,7 @@ const chromeMock: any = {
 (globalThis as any).chrome = chromeMock;
 
 // Import target handleAct
-import { handleAct } from "./act.ts";
+import { ActionTimeoutError, handleAct } from "./act.ts";
 
 function createSend() {
   const sent: any[] = [];
@@ -169,7 +169,37 @@ test("Navigate action: whitelisted destination case", async () => {
   assert.strictEqual(sent[0].verdict, "navigated");
 });
 
-test("Non-navigation actions call executeScript and sendMessage", async () => {
+test("Navigate action: failures return a typed response", async () => {
+  mockTab = { id: 10, url: "https://trusted.com" };
+  mockGrants = [{ origin: "https://trusted.com", tier: "full", expiresAt: null }];
+  chromeMock.tabs.update = async () => {
+    throw new Error("navigation blocked");
+  };
+  const { send, sent } = createSend();
+  try {
+    await handleAct(send, {
+      type: "act.request",
+      id: "navigate-failure",
+      action: "navigate",
+      value: "https://trusted.com/next",
+      ref: "",
+    });
+  } finally {
+    chromeMock.tabs.update = async (tabId: number, updateProperties: any) => {
+      updateCalledWith = { tabId, updateProperties };
+      if (mockTab && mockTab.id === tabId) {
+        mockTab.url = updateProperties.url;
+      }
+      return mockTab;
+    };
+  }
+
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].sentinel?.kind, "frame_unreachable");
+  assert.match(sent[0].sentinel?.hint || "", /navigation blocked/);
+});
+
+test("Non-navigation actions use the already injected content script", async () => {
   mockTab = { id: 10, url: "https://trusted.com" };
   mockGrants = [{ origin: "https://trusted.com", tier: "full", expiresAt: null }];
   executeScriptCalled = false;
@@ -192,11 +222,41 @@ test("Non-navigation actions call executeScript and sendMessage", async () => {
     value: "some-val",
   });
 
-  assert.strictEqual(executeScriptCalled, true);
+  assert.strictEqual(executeScriptCalled, false);
   assert.strictEqual(sent.length, 1);
   assert.strictEqual(sent[0].verdict, "dom_changed");
   assert.deepEqual(sent[0].diff.appeared, ["link"]);
   assert.strictEqual(sent[0].refs[0].name, "Next");
+});
+
+test("Non-navigation actions inject only when the content script is missing", async () => {
+  mockTab = { id: 10, url: "https://trusted.com" };
+  mockGrants = [{ origin: "https://trusted.com", tier: "full", expiresAt: null }];
+  executeScriptCalled = false;
+  let calls = 0;
+  sendMessageMock = async () => {
+    calls++;
+    if (calls === 1) {
+      throw new Error("Could not establish connection. Receiving end does not exist.");
+    }
+    return {
+      verdict: "no_change",
+      diff: { appeared: [], removed: [], changed: [] },
+      refs: [],
+    };
+  };
+
+  const { send, sent } = createSend();
+  await handleAct(send, {
+    type: "act.request",
+    id: "req-inject-fallback",
+    action: "click",
+    ref: "btn1",
+  });
+
+  assert.strictEqual(executeScriptCalled, true);
+  assert.strictEqual(calls, 2);
+  assert.strictEqual(sent[0].verdict, "no_change");
 });
 
 test("sendMessage throws navigatedAway error, new tab is whitelisted", async () => {
@@ -235,6 +295,47 @@ test("sendMessage throws navigatedAway error, new tab is NOT whitelisted", async
   assert.match(sent[0].sentinel?.hint || "", /not whitelisted/);
 });
 
+test("a timed-out click is recovered when Chrome confirms the URL changed", async () => {
+  mockTab = { id: 10, url: "https://trusted.com/before" };
+  mockGrants = [{ origin: "https://trusted.com", tier: "full", expiresAt: null }];
+  sendMessageMock = async () => {
+    mockTab = { id: 10, url: "https://trusted.com/after", status: "complete" };
+    throw new ActionTimeoutError("page action", 15_000);
+  };
+  const { send, sent } = createSend();
+
+  await handleAct(send, {
+    type: "act.request",
+    id: "timeout-navigation",
+    action: "click",
+    ref: "btn1",
+  });
+
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].verdict, "navigated");
+  assert.strictEqual(sent[0].sentinel, undefined);
+});
+
+test("a timed-out action remains a failure when the URL did not change", async () => {
+  mockTab = { id: 10, url: "https://trusted.com/same", status: "complete" };
+  mockGrants = [{ origin: "https://trusted.com", tier: "full", expiresAt: null }];
+  sendMessageMock = async () => {
+    throw new ActionTimeoutError("page action", 15_000);
+  };
+  const { send, sent } = createSend();
+
+  await handleAct(send, {
+    type: "act.request",
+    id: "real-timeout",
+    action: "click",
+    ref: "btn1",
+  });
+
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].sentinel?.kind, "frame_unreachable");
+  assert.match(sent[0].sentinel?.hint || "", /timed out/);
+});
+
 test("sendMessage throws a general error", async () => {
   mockTab = { id: 10, url: "https://trusted.com" };
   mockGrants = [{ origin: "https://trusted.com", tier: "full", expiresAt: null }];
@@ -251,4 +352,25 @@ test("sendMessage throws a general error", async () => {
   assert.strictEqual(sent.length, 1);
   assert.strictEqual(sent[0].sentinel?.kind, "frame_unreachable");
   assert.match(sent[0].sentinel?.hint || "", /could not act on the page/);
+});
+
+test("missing content-script responses are retried and returned as a typed failure", async () => {
+  mockTab = { id: 10, url: "https://trusted.com" };
+  mockGrants = [{ origin: "https://trusted.com", tier: "full", expiresAt: null }];
+  let attempts = 0;
+  sendMessageMock = async () => {
+    attempts++;
+    return undefined;
+  };
+  const { send, sent } = createSend();
+  await handleAct(send, {
+    type: "act.request",
+    id: "missing-response",
+    action: "scroll",
+    ref: "",
+    value: "down",
+  });
+  assert.strictEqual(attempts, 2);
+  assert.strictEqual(sent[0].sentinel?.kind, "frame_unreachable");
+  assert.match(sent[0].sentinel?.hint || "", /did not return an action result/);
 });

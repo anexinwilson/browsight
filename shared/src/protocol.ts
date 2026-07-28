@@ -60,10 +60,18 @@ export const AuthSchema = z.object({
 });
 export type Auth = z.infer<typeof AuthSchema>;
 
+/** Privacy-preserving lifecycle signal: the bridge needs only a count, never granted origins. */
+export const AccessStatusSchema = z.object({
+  type: z.literal("access.status"),
+  activeGrantCount: z.number().int().nonnegative(),
+});
+export type AccessStatus = z.infer<typeof AccessStatusSchema>;
+
 export const ReadRequestSchema = z.object({
   type: z.literal("read.request"),
   id: z.string(),
   url: z.string().nullable().default(null),
+  mode: z.enum(["full", "main"]).default("full"),
   schema: z.unknown().nullable().default(null),
 });
 export type ReadRequest = z.infer<typeof ReadRequestSchema>;
@@ -141,6 +149,7 @@ export type TabsResponse = z.infer<typeof TabsResponseSchema>;
 /** Any frame on the bridge, discriminated by `type`. */
 export const BridgeMessageSchema = z.discriminatedUnion("type", [
   AuthSchema,
+  AccessStatusSchema,
   ReadRequestSchema,
   ReadResponseSchema,
   ActRequestSchema,

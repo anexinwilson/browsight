@@ -8,6 +8,10 @@ import { grantSite, listGrants, revokeSite } from "./permissions/storage.ts";
 
 let selectedTier: Tier = "full";
 
+function reportUiError(error: unknown): void {
+  console.error("browsight popup failed", error);
+}
+
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
   if (!node) {
@@ -52,7 +56,7 @@ async function renderList(): Promise<void> {
     x.className = "x";
     x.textContent = "✕";
     x.addEventListener("click", () => {
-      void revokeSite(g.origin).then(renderList);
+      revokeSite(g.origin).then(renderList).catch(reportUiError);
     });
     li.append(site, x);
     list.append(li);
@@ -86,12 +90,14 @@ async function init(): Promise<void> {
     const raw = el<HTMLSelectElement>("timer").value;
     const ms = raw === "null" ? null : Number(raw);
     const expiresAt = ms === null ? null : Date.now() + ms;
-    void grantSite({ origin, tier: selectedTier, expiresAt }).then((ok) => {
-      if (ok) {
-        void renderList();
-      }
-    });
+    grantSite({ origin, tier: selectedTier, expiresAt, idleTimeoutMs: ms })
+      .then((ok) => (ok ? renderList() : undefined))
+      .catch(reportUiError);
   });
   await renderList();
 }
-void init();
+try {
+  await init();
+} catch (error: unknown) {
+  reportUiError(error);
+}

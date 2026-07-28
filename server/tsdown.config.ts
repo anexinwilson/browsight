@@ -5,6 +5,15 @@ export default defineConfig({
   format: "esm",
   platform: "node",
   target: "node24",
+  deps: {
+    alwaysBundle: [
+      /^@browsight\/shared(?:\/|$)/,
+      /^@modelcontextprotocol\/sdk(?:\/|$)/,
+      /^ws(?:\/|$)/,
+      /^zod(?:\/|$)/,
+    ],
+    onlyBundle: false,
+  },
   dts: false,
   clean: true,
 });

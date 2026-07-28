@@ -11,6 +11,8 @@ import { INTERACTIVE_SELECTOR, isHidden } from "../perception/dom.ts";
 interface RefState {
   refs: Ref[];
   elements: Map<number, Element>;
+  markdown: string;
+  hasSnapshot: boolean;
 }
 
 /**
@@ -22,15 +24,33 @@ interface RefState {
  */
 function refState(): RefState {
   const g = globalThis as typeof globalThis & { __browsightRefs?: RefState };
-  g.__browsightRefs ??= { refs: [], elements: new Map() };
+  g.__browsightRefs ??= { refs: [], elements: new Map(), markdown: "", hasSnapshot: false };
   return g.__browsightRefs;
 }
 
 /** Remember the element map from the most recent snapshot so refs resolve at act time. */
-export function rememberSnapshot(refs: Ref[], elements: Map<number, Element>): void {
+export function rememberSnapshot(refs: Ref[], elements: Map<number, Element>, markdown = ""): void {
   const s = refState();
   s.refs = refs;
   s.elements = elements;
+  s.markdown = markdown;
+  s.hasSnapshot = true;
+}
+
+/** Reuse the snapshot captured by the preceding read so an action does not rescan a dense page
+ * before it can click or type. The post-action snapshot still refreshes references and produces the
+ * structural diff. */
+export function rememberedSnapshot():
+  | {
+      readonly refs: Ref[];
+      readonly elements: Map<number, Element>;
+      readonly markdown: string;
+    }
+  | undefined {
+  const state = refState();
+  return state.hasSnapshot
+    ? { refs: state.refs, elements: state.elements, markdown: state.markdown }
+    : undefined;
 }
 
 export type Resolution = { readonly el: Element } | { readonly sentinel: Sentinel };
@@ -68,6 +88,23 @@ function narrow(candidates: Element[], recipe: Recipe): Element[] {
   return atOrdinal ? [atOrdinal] : pool;
 }
 
+function storedElementMatches(el: Element, recipe: Recipe): boolean {
+  if (safeRole(el) !== recipe.role) {
+    return false;
+  }
+  for (const [key, value] of Object.entries(recipe.dataAttrs)) {
+    if (el.getAttribute(key) !== value) {
+      return false;
+    }
+  }
+  if (recipe.text && trimmedText(el) !== recipe.text) {
+    return false;
+  }
+  const directName =
+    el.getAttribute("aria-label") ?? el.getAttribute("title") ?? el.getAttribute("placeholder");
+  return directName === null || directName.trim() === recipe.name;
+}
+
 /**
  * Every interactive element under `root`, descending into open shadow roots — the same reach the
  * snapshot has when it reads the page. Without this, references recorded inside a web component's
@@ -79,6 +116,16 @@ function allInteractive(root: Document | ShadowRoot): Element[] {
   for (const host of root.querySelectorAll("*")) {
     if (host.shadowRoot) {
       out.push(...allInteractive(host.shadowRoot));
+    }
+    if (host.tagName.toLowerCase() === "iframe") {
+      try {
+        const frameDoc = (host as HTMLIFrameElement).contentDocument;
+        if (frameDoc?.body) {
+          out.push(...allInteractive(frameDoc));
+        }
+      } catch {
+        // Cross-origin frames are intentionally unreadable from a content script.
+      }
     }
   }
   return out;
@@ -96,10 +143,7 @@ export function resolveRef(ref: string): Resolution {
   const stored = elements.get(id);
   // Fast path: the stored element, but only if it still looks like the same control — a recycled
   // (virtualized) row keeps the same connected node while changing its accessible name.
-  if (
-    stored?.isConnected &&
-    (!recipe || (safeRole(stored) === recipe.role && safeName(stored) === recipe.name))
-  ) {
+  if (stored?.isConnected && (!recipe || storedElementMatches(stored, recipe))) {
     return { el: stored };
   }
   if (!recipe) {

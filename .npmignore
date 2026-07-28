@@ -8,3 +8,4 @@ biome.json
 tsconfig.base.json
 *.log
 src/
+extension/dist/connection.json

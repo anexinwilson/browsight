@@ -52,6 +52,72 @@ test("bridge rejects a request when no extension is connected", async () => {
   }
 });
 
+test("bridge reports grant-count status and treats a disconnect as unavailable access", async () => {
+  const port = getPort();
+  const token = "access-status-token";
+  const counts: number[] = [];
+  const bridge = startBridge({
+    port,
+    token,
+    onAccessStatus: (activeGrantCount) => counts.push(activeGrantCount),
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    });
+    ws.send(JSON.stringify({ type: "auth", token, extensionVersion: "test" }));
+    ws.send(JSON.stringify({ type: "access.status", activeGrantCount: 3 }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(counts, [3]);
+
+    const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+    ws.close();
+    await closed;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(counts, [3, 0]);
+  } finally {
+    ws.close();
+    await bridge.close();
+  }
+});
+
+test("a newly authenticated extension replaces the previous connection", async () => {
+  const port = getPort();
+  const token = "single-active-extension-token";
+  const bridge = startBridge({ port, token });
+  const first = new WebSocket(`ws://127.0.0.1:${port}`);
+  const second = new WebSocket(`ws://127.0.0.1:${port}`);
+  try {
+    await Promise.all(
+      [first, second].map(
+        (ws) =>
+          new Promise<void>((resolve, reject) => {
+            ws.once("open", resolve);
+            ws.once("error", reject);
+          }),
+      ),
+    );
+    first.send(JSON.stringify({ type: "auth", token, extensionVersion: "test" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const firstClosed = new Promise<{ code: number; reason: string }>((resolve) => {
+      first.once("close", (code, reason) => resolve({ code, reason: reason.toString() }));
+    });
+    second.send(JSON.stringify({ type: "auth", token, extensionVersion: "test" }));
+
+    assert.deepEqual(await firstClosed, {
+      code: 1000,
+      reason: "replaced by a newer extension connection",
+    });
+  } finally {
+    first.close();
+    second.close();
+    await bridge.close();
+  }
+});
+
 test("a second bridge on the same port degrades gracefully instead of crashing", async () => {
   const port = getPort();
   const first = startBridge({ port, token: "t" });
@@ -59,7 +125,7 @@ test("a second bridge on the same port degrades gracefully instead of crashing",
   // process on an unhandled 'error' event; with it, requests reject with a clear message.
   const second = startBridge({ port, token: "t" });
   try {
-    await new Promise((resolve) => setTimeout(resolve, 100)); // let the 'error' event land
+    await assert.rejects(second.ready, /only one client can drive browsight/);
     await assert.rejects(() => second.readActiveTab(null), /only one client can drive browsight/);
   } finally {
     await first.close();

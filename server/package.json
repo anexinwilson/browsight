@@ -1,10 +1,15 @@
 {
   "name": "@browsight/server",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
-  "bin": { "browsight-server": "./dist/index.mjs" },
-  "scripts": { "build": "tsdown", "typecheck": "tsc -p tsconfig.json" },
+  "bin": {
+    "browsight-server": "./dist/index.mjs"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json"
+  },
   "dependencies": {
     "@browsight/shared": "*",
     "@modelcontextprotocol/sdk": "^1.0.0",
