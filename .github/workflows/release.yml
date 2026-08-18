@@ -27,7 +27,7 @@ jobs:
       - run: node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=test/coverage/lcov.info "**/*.test.ts"
       - run: npm run build
       - name: Upload coverage for SonarCloud
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: test/coverage/lcov.info
