@@ -9,7 +9,6 @@ export default defineConfig({
     alwaysBundle: [
       /^@browsight\/shared(?:\/|$)/,
       /^@modelcontextprotocol\/sdk(?:\/|$)/,
-      /^ws(?:\/|$)/,
       /^zod(?:\/|$)/,
     ],
     onlyBundle: false,

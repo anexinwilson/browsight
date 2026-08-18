@@ -3,14 +3,24 @@
  * and a structural diff. Reference re-resolution lives in `./resolve.ts` and the quiet-window wait in
  * `./settle.ts`; this module orchestrates them.
  */
+
 import type { Action, Diff, Ref, Sentinel, Verdict } from "@browsight/shared";
 import { buildSnapshot } from "../perception/snapshot.ts";
 import { computeDiff, selectVerdict } from "./diff.ts";
-import { rememberSnapshot, rememberedSnapshot, resolveRef } from "./resolve.ts";
 import {
-  type ScrollDirection,
+  dispatchClick,
+  dispatchEnter,
+  fillEditable,
+  fillSelect,
+  fillValue,
+  isSelectControl,
+  isTextControl,
+} from "./input.ts";
+import { rememberedSnapshot, rememberSnapshot, resolveRef } from "./resolve.ts";
+import {
   findScrollTarget,
   observeSemanticGrowth,
+  type ScrollDirection,
   scrollActiveSurface,
   scrollSurface,
 } from "./scroll.ts";
@@ -23,141 +33,10 @@ export interface ActResult {
   readonly sentinel?: Sentinel;
 }
 
-function realmOf(el: Element): typeof globalThis {
-  return (el.ownerDocument.defaultView ?? globalThis) as unknown as typeof globalThis;
-}
-
-function dispatchEnter(el: Element): void {
-  const realm = realmOf(el);
-  el.dispatchEvent(
-    new realm.KeyboardEvent("keydown", {
-      bubbles: true,
-      composed: true,
-      key: "Enter",
-      code: "Enter",
-      keyCode: 13,
-      which: 13,
-    }),
-  );
-  el.dispatchEvent(
-    new realm.KeyboardEvent("keypress", {
-      bubbles: true,
-      composed: true,
-      key: "Enter",
-      code: "Enter",
-      keyCode: 13,
-      which: 13,
-    }),
-  );
-  el.dispatchEvent(
-    new realm.KeyboardEvent("keyup", {
-      bubbles: true,
-      composed: true,
-      key: "Enter",
-      code: "Enter",
-      keyCode: 13,
-      which: 13,
-    }),
-  );
-}
-
-function tagName(el: Element): string {
-  return el.tagName.toLowerCase();
-}
-
-function isTextControl(el: Element): el is HTMLInputElement | HTMLTextAreaElement {
-  const tag = tagName(el);
-  return tag === "input" || tag === "textarea";
-}
-
-function isSelectControl(el: Element): el is HTMLSelectElement {
-  return tagName(el) === "select";
-}
-
-export function fillValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
-  const realm = realmOf(el);
-  const proto =
-    tagName(el) === "textarea"
-      ? realm.HTMLTextAreaElement.prototype
-      : realm.HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-  el.focus();
-  el.dispatchEvent(
-    new realm.InputEvent("beforeinput", {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      inputType: "insertText",
-      data: value,
-    }),
-  );
-  if (setter) {
-    setter.call(el, value);
-  } else {
-    el.value = value;
-  }
-  if (typeof el.setSelectionRange === "function") {
-    el.setSelectionRange(value.length, value.length);
-  }
-  el.dispatchEvent(
-    new realm.InputEvent("input", {
-      bubbles: true,
-      composed: true,
-      inputType: "insertText",
-      data: value,
-    }),
-  );
-  el.dispatchEvent(new realm.Event("change", { bubbles: true, composed: true }));
-  el.blur();
-}
-
-/** Select an <option> by its value, label, or visible text. */
-export function fillSelect(el: HTMLSelectElement, value: string): boolean {
-  const realm = realmOf(el);
-  const match = Array.from(el.options).find(
-    (o) => o.value === value || o.label === value || o.text.trim() === value,
-  );
-  if (!match) {
-    return false;
-  }
-  el.value = match.value;
-  el.dispatchEvent(new realm.Event("input", { bubbles: true, composed: true }));
-  el.dispatchEvent(new realm.Event("change", { bubbles: true, composed: true }));
-  return el.value === match.value;
-}
-
-/** Replace the text of a contenteditable host, dispatching the input events editors listen for. */
-export function fillEditable(el: HTMLElement, value: string): boolean {
-  const realm = realmOf(el);
-  el.focus();
-  el.dispatchEvent(
-    new realm.InputEvent("beforeinput", {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      inputType: "insertText",
-      data: value,
-    }),
-  );
-  el.textContent = value;
-  el.dispatchEvent(
-    new realm.InputEvent("input", {
-      bubbles: true,
-      composed: true,
-      inputType: "insertText",
-      data: value,
-    }),
-  );
-  return (el.textContent ?? "") === value;
-}
-
-const EMPTY_DIFF: Diff = { appeared: [], removed: [], changed: [] };
-
-// `scroll` directions that page the whole viewport rather than centring a specific element.
 const SCROLL_DIRECTIONS = new Set(["up", "down", "top", "bottom"]);
 
 // How many viewport pages `scroll: "more"` will try, and the pause after each for lazy content to
-// begin loading. Kept small so the whole loop finishes well inside the bridge's request timeout —
+// begin loading. Kept small so the whole loop finishes well inside the bridge's request timeout,
 // pages like YouTube mutate constantly, so a mutation-settle would never go quiet and would blow the
 // budget; a short fixed pause plus a cheap element count is enough to notice new content arriving.
 const LOAD_MORE_STEPS = 6;
@@ -165,9 +44,11 @@ const LOAD_MORE_PAUSE_MS = 700;
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Scroll the page itself — used to reach lazily-loaded content (comments, infinite feeds) that no
+/** Scroll the page itself, used to reach lazily-loaded content (comments, infinite feeds) that no
  *  current reference points at yet. Returns how far it actually moved, so a caller can tell "nothing
  *  more to load" from "the scroll never moved". */
+const EMPTY_DIFF: Diff = { appeared: [], removed: [], changed: [] };
+
 function scrollViewport(direction: string): { movedPx: number } {
   return scrollActiveSurface(document, direction as ScrollDirection);
 }
@@ -176,46 +57,11 @@ function scrollViewport(direction: string): { movedPx: number } {
  * Click by dispatching a realistic pointer+mouse gesture rather than a bare `el.click()`. Modern
  * web-component sites (YouTube's Polymer, Reddit's Lit, many React routers) bind their tap handlers
  * to pointerdown/up and ignore a lone synthetic click, so `.click()` is a silent no-op there. Firing
- * the full sequence — with `composed: true` so it crosses shadow-DOM boundaries — makes those
+ * the full sequence, with `composed: true` so it crosses shadow-DOM boundaries, makes those
  * handlers run, while the trailing `click` still triggers native activation (link nav, form submit).
  */
-export function dispatchClick(el: Element): void {
-  const realm = realmOf(el);
-  const PointerCtor = realm.PointerEvent ?? globalThis.PointerEvent;
-  const MouseCtor = realm.MouseEvent ?? globalThis.MouseEvent;
-  const rect = (el as HTMLElement).getBoundingClientRect?.();
-  const clientX = rect ? rect.left + rect.width / 2 : 0;
-  const clientY = rect ? rect.top + rect.height / 2 : 0;
-  const mouse: MouseEventInit = {
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-    view: realm as unknown as Window,
-    button: 0,
-    clientX,
-    clientY,
-  };
-  const pointer: PointerEventInit = {
-    ...mouse,
-    pointerId: 1,
-    pointerType: "mouse",
-    isPrimary: true,
-  };
-  el.dispatchEvent(new PointerCtor("pointerover", pointer));
-  el.dispatchEvent(new PointerCtor("pointerenter", pointer));
-  el.dispatchEvent(new PointerCtor("pointerdown", pointer));
-  el.dispatchEvent(new MouseCtor("mousedown", mouse));
-  if (typeof (el as HTMLElement).focus === "function") {
-    (el as HTMLElement).focus();
-  }
-  el.dispatchEvent(new PointerCtor("pointerup", pointer));
-  el.dispatchEvent(new MouseCtor("mouseup", mouse));
-  const clickable = el as HTMLElement;
-  if (typeof clickable.click === "function") {
-    clickable.click();
-  } else {
-    el.dispatchEvent(new MouseCtor("click", mouse));
-  }
+function currentHref(): string {
+  return typeof location === "undefined" ? "" : location.href;
 }
 
 /** Settle, snapshot the result, remember it for the next act, and report verdict + diff + refs. */
@@ -224,23 +70,42 @@ async function settleAndReport(
   before: { readonly markdown: string; readonly refs: Ref[] },
   valueSet: boolean,
   scope: Node = document.documentElement,
+  beforeHref = "",
 ): Promise<ActResult> {
   await settle(scope);
   const after = buildSnapshot(document);
   rememberSnapshot(after.refs, after.elements, after.markdown);
   const diff = computeDiff(before.refs, after.refs);
-  return {
-    verdict: selectVerdict(action, before.markdown || after.markdown, after.markdown, valueSet),
-    diff,
-    refs: after.refs,
-  };
+  const navigated = beforeHref !== "" && currentHref() !== beforeHref;
+  const verdict = selectVerdict(
+    action,
+    before.markdown || after.markdown,
+    after.markdown,
+    valueSet,
+    navigated,
+  );
+  // A bare "no_change" leaves the caller unable to tell a dud reference from a
+  // control that genuinely does nothing, and those need different next steps.
+  // Callers with a more specific explanation override this sentinel.
+  if (verdict === "no_change") {
+    return {
+      verdict,
+      diff,
+      refs: after.refs,
+      sentinel: {
+        kind: "not_actionable",
+        hint: `the ${action} reached the element but the page did not change, it may be inert, may need a different interaction, or may have opened a new tab (check browser_tabs)`,
+      },
+    };
+  }
+  return { verdict, diff, refs: after.refs };
 }
 
 /**
  * Page the document downward until new interactive content appears or the page stops moving. This is
  * the universal "reveal what's below" primitive: one call pages incrementally and settles after each
  * step, so lazy content (comments, infinite feeds, deferred sections) loads as it enters the viewport
- * — instead of the caller guessing how far to jump, and instead of a single jump-to-bottom overshoot
+ *, instead of the caller guessing how far to jump, and instead of a single jump-to-bottom overshoot
  * skipping past a load-trigger on tall, asymmetric layouts. Stops the moment something loads.
  */
 async function loadMore(): Promise<ActResult> {
@@ -279,7 +144,7 @@ async function loadMore(): Promise<ActResult> {
           verdict: "no_change",
           diff: EMPTY_DIFF,
           refs: after.refs,
-          sentinel: { kind: "not_actionable", hint: "reached the bottom — nothing more to load" },
+          sentinel: { kind: "not_actionable", hint: "reached the bottom, nothing more to load" },
         };
       }
     }
@@ -309,8 +174,15 @@ async function handleViewportScroll(
 
   if (action === "scroll" && value && SCROLL_DIRECTIONS.has(value)) {
     const before = rememberedSnapshot() ?? buildSnapshot(document);
+    const beforeHref = currentHref();
     const { movedPx } = scrollViewport(value);
-    const result = await settleAndReport(action, before, false);
+    const result = await settleAndReport(
+      action,
+      before,
+      false,
+      document.documentElement,
+      beforeHref,
+    );
     if (result.verdict === "no_change") {
       return {
         ...result,
@@ -318,7 +190,7 @@ async function handleViewportScroll(
           kind: "not_actionable",
           hint:
             movedPx === 0
-              ? "scroll did not move — the page is at the bottom or doesn't scroll"
+              ? "scroll did not move, the page is at the bottom or doesn't scroll"
               : `scrolled ${movedPx}px but no new content loaded`,
         },
       };
@@ -337,7 +209,7 @@ function tryPerformFill(
     readonly markdown: string;
   },
 ):
-  | { kind: "success"; valueSet: boolean }
+  | { kind: "success"; valueSet: boolean; submitted: boolean }
   | { kind: "not_actionable"; result: ActResult }
   | { kind: "ignored" } {
   if (value === undefined) {
@@ -355,20 +227,20 @@ function tryPerformFill(
     if (pressEnter) {
       dispatchEnter(el);
     }
-    return { kind: "success", valueSet: el.value === actualValue };
+    return { kind: "success", valueSet: el.value === actualValue, submitted: pressEnter };
   }
   if (isSelectControl(el)) {
-    return { kind: "success", valueSet: fillSelect(el, actualValue) };
+    return { kind: "success", valueSet: fillSelect(el, actualValue), submitted: false };
   }
   if ((el as HTMLElement).isContentEditable) {
     const success = fillEditable(el as HTMLElement, actualValue);
     if (pressEnter) {
       dispatchEnter(el);
     }
-    return { kind: "success", valueSet: success };
+    return { kind: "success", valueSet: success, submitted: pressEnter };
   }
 
-  // Not a fillable control — say so explicitly instead of silently reporting no_change.
+  // Not a fillable control, say so explicitly instead of silently reporting no_change.
   rememberSnapshot(before.refs, before.elements, before.markdown);
   return {
     kind: "not_actionable",
@@ -378,13 +250,50 @@ function tryPerformFill(
       refs: before.refs,
       sentinel: {
         kind: "not_actionable",
-        hint: "that element can't be filled — re-read and use a text field, dropdown, or editor",
+        hint: "that element can't be filled, re-read and use a text field, dropdown, or editor",
       },
     },
   };
 }
 
 /** Resolve `ref`, perform `action`, settle, and report the verdict + diff + fresh references. */
+type Snapshotted = {
+  readonly refs: Ref[];
+  readonly elements: Map<number, Element>;
+  readonly markdown: string;
+};
+
+/**
+ * Fill the control and decide whether the caller can stop here. Typing into a box leaves the page
+ * where it was, so the expensive settle and snapshot are skipped. Submitting it does not: an Enter
+ * can navigate or swap the whole view, so that case falls through to the normal settle and report.
+ */
+function applyFill(
+  el: Element,
+  value: string | undefined,
+  before: Snapshotted,
+): { kind: "done"; result: ActResult } | { kind: "settle"; valueSet: boolean } {
+  const fillResult = tryPerformFill(el, value, before);
+  if (fillResult.kind === "not_actionable") {
+    return { kind: "done", result: fillResult.result };
+  }
+  if (fillResult.kind !== "success") {
+    return { kind: "settle", valueSet: false };
+  }
+  if (fillResult.submitted) {
+    return { kind: "settle", valueSet: fillResult.valueSet };
+  }
+  rememberSnapshot(before.refs, before.elements, before.markdown);
+  return {
+    kind: "done",
+    result: {
+      verdict: fillResult.valueSet ? "value_set" : "no_change",
+      diff: EMPTY_DIFF,
+      refs: before.refs,
+    },
+  };
+}
+
 export async function performAct(ref: string, action: Action, value?: string): Promise<ActResult> {
   const scrollResult = await handleViewportScroll(action, value);
   if (scrollResult) {
@@ -405,6 +314,7 @@ export async function performAct(ref: string, action: Action, value?: string): P
 
   const el = resolution.el;
   const before = rememberedSnapshot() ?? buildSnapshot(document);
+  const beforeHref = currentHref();
   const settleScope = document.documentElement;
   let valueSet = false;
 
@@ -413,19 +323,11 @@ export async function performAct(ref: string, action: Action, value?: string): P
       dispatchClick(el);
       break;
     case "fill": {
-      const fillResult = tryPerformFill(el, value, before);
-      if (fillResult.kind === "not_actionable") {
-        return fillResult.result;
+      const outcome = applyFill(el, value, before);
+      if (outcome.kind === "done") {
+        return outcome.result;
       }
-      if (fillResult.kind === "success") {
-        valueSet = fillResult.valueSet;
-        rememberSnapshot(before.refs, before.elements, before.markdown);
-        return {
-          verdict: valueSet ? "value_set" : "no_change",
-          diff: EMPTY_DIFF,
-          refs: before.refs,
-        };
-      }
+      valueSet = outcome.valueSet;
       break;
     }
     case "scroll":
@@ -438,5 +340,5 @@ export async function performAct(ref: string, action: Action, value?: string): P
       break;
   }
 
-  return settleAndReport(action, before, valueSet, settleScope);
+  return settleAndReport(action, before, valueSet, settleScope, beforeHref);
 }

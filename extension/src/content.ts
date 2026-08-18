@@ -52,7 +52,7 @@ if (!globalThis.__browsightInjected) {
       if (message.kind === "read") {
         const snap = activeBuildSnapshot(document, { mode: message.mode ?? "full" });
         activeRememberSnapshot(snap.refs, snap.elements, snap.markdown);
-        // Freshness marker: performance.timeOrigin is the page's load time — constant for one page
+        // Freshness marker: performance.timeOrigin is the page's load time, constant for one page
         // instance, and it changes on every reload/navigation. It reflects the PAGE load, not this
         // content script's re-injection (the same document keeps the same timeOrigin), so comparing
         // it across two reads tells the agent whether the page actually refreshed/navigated.

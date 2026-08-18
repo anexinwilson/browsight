@@ -70,6 +70,15 @@ function primaryContentRoot(doc: Document): Element | null {
   return best?.element ?? null;
 }
 
+/**
+ * Regions that frame a page rather than carry its content. Matched by landmark role
+ * and tag only, never by site-specific ids or classes, so this stays honest on any
+ * site. A page with no semantic markup at all gets no benefit, which is the correct
+ * outcome: guessing would risk dropping real content.
+ */
+const CHROME_SELECTOR =
+  "nav, header, footer, aside, [role='navigation'], [role='banner'], [role='contentinfo'], [role='complementary']";
+
 /** Build the semantic snapshot of `doc` (the live document by default). */
 class SnapshotBuilder {
   refs: Ref[] = [];
@@ -79,6 +88,8 @@ class SnapshotBuilder {
   nextId = 1;
   hasPasswordField = false;
   lastRefName = "";
+  private lastLink: { role: string; name: string; href: string } | null = null;
+  private skipChrome = false;
   elements = new Map<number, Element>();
   truncated = false;
   outputChars = 0;
@@ -98,15 +109,27 @@ class SnapshotBuilder {
       this.emit(`# ${title}`);
     }
 
-    const dialog = activeDialogRoot(this.doc);
+    // A modal is the primary content while it is open, but "full" must still mean the
+    // whole page, scoping it to the dialog silently hid everything behind it, with no
+    // way for the caller to see what it was missing.
+    const openDialog = activeDialogRoot(this.doc);
+    const dialog = this.mode === "main" ? openDialog : null;
     const primary = !dialog && this.mode === "main" ? primaryContentRoot(this.doc) : null;
     if (dialog) {
-      this.emit("[focused on active dialog]");
+      this.emit(
+        "[focused on active dialog; call browser_read with mode=full to see the page behind it]",
+      );
+    } else if (openDialog) {
+      this.emit("[a dialog is open over this page; it may block interaction until dismissed]");
     } else if (this.mode === "main") {
       this.emit(
         primary ? "[focused on primary content]" : "[no primary landmark; showing full page]",
       );
     }
+    // "main" with no landmark used to mean "the whole page", which on a site like a
+    // storefront is mostly navigation, footer filters and banners. Skip those framing
+    // regions instead so the mode keeps its meaning everywhere.
+    this.skipChrome = this.mode === "main" && !dialog && !primary;
     const root = dialog ?? primary ?? this.doc.body;
     if (root) {
       this.walk(root);
@@ -160,7 +183,25 @@ class SnapshotBuilder {
     const name = rawName || fallbackName(el);
     const ordinalKey = `${role}\n${rawName}`;
     const ordinal = this.ordinals.get(ordinalKey) ?? 0;
+    // The ordinal is consumed even when the marker is skipped below: recipes resolve by
+    // counting matching elements in the DOM, so a gap here would make every later
+    // element of the same role and name resolve to the wrong node.
     this.ordinals.set(ordinalKey, ordinal + 1);
+
+    // Listing pages wrap each result in an image link and a title link carrying the
+    // same accessible name and target, which doubles the cost of every search page.
+    // One marker is enough, both go to the same place.
+    const href = role === "link" ? el.getAttribute("href") : null;
+    if (
+      href &&
+      this.lastLink?.href === href &&
+      this.lastLink.name === name &&
+      this.lastLink.role === role
+    ) {
+      return;
+    }
+    this.lastLink = href ? { role, name, href } : null;
+
     const id = this.nextId++;
     const state = elementState(el);
     if (!this.emit(`[${role} ${JSON.stringify(name)} #${id}]`)) {
@@ -229,6 +270,9 @@ class SnapshotBuilder {
       return true;
     }
     if (tag === "footer" || el.getAttribute("role") === "contentinfo") {
+      return true;
+    }
+    if (this.skipChrome && el.matches(CHROME_SELECTOR)) {
       return true;
     }
     return false;

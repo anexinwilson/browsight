@@ -1,5 +1,5 @@
 /**
- * The permission policy — pure decision logic, with no `chrome.*` access, so it can be unit-tested
+ * The permission policy, pure decision logic, with no `chrome.*` access, so it can be unit-tested
  * in isolation. Storage and the host-permission requests live in `permissions.ts`.
  */
 

@@ -6,7 +6,7 @@
 import type { SentinelKind } from "@browsight/shared";
 import { decideAccess } from "../permissions/policy.ts";
 import { listGrants, touchGrant } from "../permissions/storage.ts";
-import { type Send, currentTab, originOf, readTabContent, setCurrentTab } from "./common.ts";
+import { currentTab, originOf, readTabContent, type Send, setCurrentTab } from "./common.ts";
 
 export async function handleRead(
   send: Send,
@@ -18,12 +18,7 @@ export async function handleRead(
   // being on another window entirely (e.g. the service-worker devtools).
   const tab = await currentTab();
   if (!tab?.id || !tab.url) {
-    sendSentinel(
-      send,
-      id,
-      "frame_unreachable",
-      "no tab to read — focus a page or use browser_tabs",
-    );
+    sendSentinel(send, id, "frame_unreachable", "no tab to read, focus a page or use browser_tabs");
     return;
   }
   await setCurrentTab(tab.id);
@@ -33,7 +28,7 @@ export async function handleRead(
       send,
       id,
       "not_whitelisted",
-      `${origin} is not whitelisted — open the browsight popup and allow this site.`,
+      `${origin} is not whitelisted, open the browsight popup and allow this site.`,
     );
     return;
   }

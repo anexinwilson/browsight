@@ -4,5 +4,6 @@
     "types": ["node"],
     "lib": ["ES2023"]
   },
-  "include": ["."]
+  "include": ["."],
+  "exclude": ["dist", "scratch"]
 }

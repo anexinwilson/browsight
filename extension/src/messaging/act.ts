@@ -5,9 +5,9 @@
  * reported as a clean `navigated` verdict rather than a raw channel-closed error.
  */
 import type { ActRequest, Diff, Ref, Sentinel, SentinelKind, Verdict } from "@browsight/shared";
-import { type Grant, decideAccess } from "../permissions/policy.ts";
+import { decideAccess, type Grant } from "../permissions/policy.ts";
 import { listGrants, touchGrant } from "../permissions/storage.ts";
-import { type Send, currentTab, originOf } from "./common.ts";
+import { currentTab, originOf, type Send } from "./common.ts";
 
 interface ActContentResult {
   readonly verdict: Verdict;
@@ -124,7 +124,7 @@ async function waitForTabReady(
       };
       const listener = (
         updatedTabId: number,
-        changeInfo: chrome.tabs.TabChangeInfo,
+        changeInfo: chrome.tabs.OnUpdatedInfo,
         tab: chrome.tabs.Tab,
       ): void => {
         if (updatedTabId === tabId && (changeInfo.status === "complete" || tabIsReady(tab))) {
@@ -185,7 +185,7 @@ async function handleNavigate(
       send,
       id,
       "not_whitelisted",
-      `${target} is not set to "Full control" — navigating there is an action and needs full-control access in the browsight popup.`,
+      `${target} is not set to "Full control", navigating there is an action and needs full-control access in the browsight popup.`,
     );
     return;
   }
@@ -196,7 +196,7 @@ async function handleNavigate(
       send,
       id,
       "not_whitelisted",
-      `the page navigated to ${destinationOrigin}, which is not whitelisted — allow it in the browsight popup to continue.`,
+      `the page navigated to ${destinationOrigin}, which is not whitelisted, allow it in the browsight popup to continue.`,
     );
     return;
   }
@@ -245,8 +245,19 @@ async function handleContentActFailure(
     if (!(navigationError instanceof ActionTimeoutError)) {
       throw navigationError;
     }
-    sendActSentinel(send, msg.id, "frame_unreachable", navigationError.message);
-    return;
+    // A slow page is not a failed one. Sites that hold long-lived connections open
+    // never settle the load event even though the document is rendered and readable,
+    // so check the tab before calling it unreachable.
+    const settled = await currentTab();
+    if (settled?.status !== "complete") {
+      sendActSentinel(
+        send,
+        msg.id,
+        "frame_unreachable",
+        `${navigationError.message}, the page may still be loading; call browser_read to see what rendered.`,
+      );
+      return;
+    }
   }
 
   // A navigation must not silently move the agent onto an origin the user has not allowed.
@@ -257,7 +268,7 @@ async function handleContentActFailure(
       send,
       msg.id,
       "not_whitelisted",
-      `the page navigated to ${newOrigin}, which is not whitelisted — allow it in the browsight popup to continue.`,
+      `the page navigated to ${newOrigin}, which is not whitelisted, allow it in the browsight popup to continue.`,
     );
     return;
   }
@@ -284,7 +295,7 @@ export async function handleAct(send: Send, msg: ActRequest): Promise<void> {
       send,
       msg.id,
       "not_whitelisted",
-      `${origin} is not set to "Full control" — change its access in the browsight popup.`,
+      `${origin} is not set to "Full control", change its access in the browsight popup.`,
     );
     return;
   }

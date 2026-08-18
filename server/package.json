@@ -1,6 +1,6 @@
 {
   "name": "@browsight/server",
-  "version": "0.1.5",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "bin": {
@@ -13,10 +13,6 @@
   "dependencies": {
     "@browsight/shared": "*",
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "ws": "^8.18.0",
     "zod": "^4.0.0"
-  },
-  "devDependencies": {
-    "@types/ws": "^8.5.0"
   }
 }

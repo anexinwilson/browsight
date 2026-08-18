@@ -1,13 +1,13 @@
 /**
  * The tabs handler: list the open http(s) tabs and, when `select` resolves to a single whitelisted
  * tab, switch to it and read it. Every tab is listed (so a not-whitelisted tab can be named and the
- * user told to allow it), but switching/reading is gated on the same whitelist as everything else —
+ * user told to allow it), but switching/reading is gated on the same whitelist as everything else,
  * the agent can only move among sites the user has permitted.
  */
 import type { Sentinel, TabInfo, TabsRequest } from "@browsight/shared";
 import { decideAccess } from "../permissions/policy.ts";
 import { listGrants, touchGrant } from "../permissions/storage.ts";
-import { type Send, currentTab, originOf, readTabContent, setCurrentTab } from "./common.ts";
+import { currentTab, originOf, readTabContent, type Send, setCurrentTab } from "./common.ts";
 import { accessLabel, resolveTabSelection } from "./tab-select.ts";
 
 export async function handleTabs(send: Send, msg: TabsRequest): Promise<void> {

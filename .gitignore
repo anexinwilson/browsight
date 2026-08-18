@@ -10,3 +10,15 @@ Thumbs.db
 scratch/
 .browsight/
 .agents/
+.claude/
+
+# API tokens — never commit
+.env
+.env.*
+
+# Scanner working directories
+.scannerwork/
+*.sarif
+
+# Internal planning and design notes
+docs/

@@ -197,7 +197,7 @@ export function findScrollTarget(
     return { element: best.element, kind: "container" };
   }
 
-  // Traditional documents—including large feeds such as YouTube—scroll at the document root.
+  // Traditional documents, including large feeds such as YouTube, scroll at the document root.
   // Avoid a full composed-tree scan when that root can already satisfy the requested direction.
   if (remainingScroll(root, direction) > 1) {
     return { element: root, kind: "document" };

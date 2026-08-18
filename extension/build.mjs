@@ -1,7 +1,7 @@
 // Bundles the extension with esbuild: the service worker as an ESM module and the content script
 // as a self-contained IIFE (so its npm deps are inlined for on-demand injection). esbuild is used
 // here rather than the server's tsdown because it bundles multi-surface IIFE output reliably.
-import { copyFile, cp, mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
 import ts from "typescript";
 
@@ -59,7 +59,15 @@ await build({
   format: "esm",
 });
 
-await copyFile("src/manifest.json", `${outdir}/manifest.json`);
+// The published version lives in the root package.json. Stamping it into the manifest at build
+// time keeps the extension, the server and npm reporting one number instead of three that drift.
+const manifest = JSON.parse(await readFile("src/manifest.json", "utf8"));
+const { version } = JSON.parse(await readFile("../package.json", "utf8"));
+await writeFile(
+  `${outdir}/manifest.json`,
+  `${JSON.stringify({ ...manifest, version }, null, 2)}
+`,
+);
 await copyFile("src/popup.html", `${outdir}/popup.html`);
 await copyFile("src/options.html", `${outdir}/options.html`);
 await cp("src/icons", `${outdir}/icons`, { recursive: true });

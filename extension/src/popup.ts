@@ -64,6 +64,7 @@ async function renderList(): Promise<void> {
 }
 
 async function init(): Promise<void> {
+  chrome.runtime?.sendMessage?.({ type: "wakeUp" })?.catch(() => {});
   const origin = await currentOrigin();
   el<HTMLDivElement>("origin").textContent = origin ?? "(no site)";
   const timer = el<HTMLSelectElement>("timer");
@@ -73,7 +74,7 @@ async function init(): Promise<void> {
     o.textContent = opt.label;
     timer.append(o);
   }
-  const tierRow = el<HTMLDivElement>("tier");
+  const tierRow = el<HTMLFieldSetElement>("tier");
   const buttons = Array.from(tierRow.querySelectorAll("button"));
   for (const btn of buttons) {
     btn.addEventListener("click", () => {

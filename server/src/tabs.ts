@@ -8,7 +8,7 @@ import type { TabInfo } from "@browsight/shared";
 const ACCESS_LABEL: Record<TabInfo["access"], string> = {
   full: "full control",
   read: "read-only",
-  none: "not allowed — whitelist to use",
+  none: "not allowed, whitelist to use",
 };
 
 export function formatTabs(tabs: readonly TabInfo[]): string {
@@ -17,7 +17,7 @@ export function formatTabs(tabs: readonly TabInfo[]): string {
   }
   const lines = tabs.map(
     (t) =>
-      `${t.active ? "* " : "- "}${t.title || t.origin} — ${t.origin} (${ACCESS_LABEL[t.access]})`,
+      `${t.active ? "* " : "- "}${t.title || t.origin}, ${t.origin} (${ACCESS_LABEL[t.access]})`,
   );
   return `Open tabs (* = active):\n${lines.join("\n")}`;
 }

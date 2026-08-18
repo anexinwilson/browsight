@@ -1,6 +1,6 @@
 {
   "name": "browsight",
-  "version": "0.1.5",
+  "version": "1.0.0",
   "type": "module",
   "description": "A universal, permissioned read-and-act tool that exposes your real, authenticated Chrome to any MCP client.",
   "license": "MIT",
@@ -8,40 +8,60 @@
     "type": "git",
     "url": "git+https://github.com/anexinwilson/browsight.git"
   },
-  "keywords": ["mcp", "ai", "llm", "browser", "automation"],
+  "keywords": [
+    "mcp",
+    "ai",
+    "llm",
+    "browser",
+    "automation"
+  ],
   "bin": {
     "browsight": "./scripts/dist/setup.mjs"
   },
-  "files": ["server/dist", "extension/dist", "shared/dist", "scripts/dist"],
+  "files": [
+    "server/dist",
+    "extension/dist",
+    "shared/dist",
+    "scripts/dist"
+  ],
   "engines": {
     "node": ">=24"
   },
-  "workspaces": ["shared", "server", "extension", "scripts"],
-  "overrides": {
-    "@hono/node-server": "^2.0.11",
-    "ip-address": "^10.2.1"
-  },
+  "workspaces": [
+    "shared",
+    "server",
+    "extension",
+    "scripts"
+  ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p test/tsconfig.json --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "node --test \"**/*.test.ts\"",
+    "test": "cross-env NODE_OPTIONS=\"--import tsx\" node --test \"**/*.test.ts\"",
+    "test:ci": "node --test \"**/*.test.ts\"",
+    "test:coverage": "node -e \"require('node:fs').mkdirSync('test/coverage',{recursive:true})\" && cross-env NODE_OPTIONS=\"--import tsx\" node --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=test/coverage/lcov.info --test \"**/*.test.ts\"",
     "hooks": "husky",
     "setup": "node scripts/setup.ts",
     "doctor": "node scripts/setup.ts doctor",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "scan": "node test/scans/run-all.mjs",
+    "scan:sonar": "node test/scans/run-sonar.mjs",
+    "scan:snyk": "node test/scans/run-snyk.mjs",
+    "scan:verify": "node test/scans/verify-sonar.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
-    "@types/jsdom": "^28.0.3",
-    "@types/node": "^24.0.0",
+    "@biomejs/biome": "^2.5.8",
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^26.2.0",
+    "cross-env": "^10.1.0",
     "husky": "^9.1.7",
-    "jsdom": "^29.1.1",
-    "lint-staged": "^15.2.11",
+    "jsdom": "^30.0.1",
+    "lint-staged": "^17.3.0",
     "sharp": "^0.35.2",
     "tsdown": "^0.22.3",
-    "typescript": "^5.7.0"
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
   },
   "lint-staged": {
     "*.{ts,js,json,md}": "biome check --write"

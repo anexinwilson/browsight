@@ -9,7 +9,7 @@ export function settle(
   minimumMs = 150,
 ): Promise<void> {
   return new Promise((resolve) => {
-    let quietTimer = 0;
+    let quietTimer: ReturnType<typeof setTimeout> | undefined;
     const startedAt = Date.now();
     const observer = new MutationObserver(() => {
       clearTimeout(quietTimer);

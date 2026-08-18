@@ -20,13 +20,17 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm run lint
-      - run: node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=lcov.info "**/*.test.ts"
+      # The lcov reporter will not create its own directory, and a fresh checkout has none.
+      - run: mkdir -p test/coverage
+      # Bare `node --test`, not the tsx-based npm script, so CI keeps exercising Node type
+      # stripping. Coverage goes where sonar-project.properties points.
+      - run: node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=test/coverage/lcov.info "**/*.test.ts"
       - run: npm run build
       - name: Upload coverage for SonarCloud
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: lcov.info
+          path: test/coverage/lcov.info
 
   security_snyk:
     name: Snyk Security Scan
@@ -75,6 +79,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: coverage-report
+          # sonar-project.properties points at test/coverage/lcov.info; the artifact must land
+          # there or SonarCloud sees no coverage and fails the gate at 0%.
+          path: test/coverage
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995
         with:
@@ -87,7 +94,10 @@ jobs:
   publish:
     name: Publish to npm
     needs: [check, security_snyk, security_sonar]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Continuous deployment: every green push to main publishes, provided package.json carries a
+    # version that is not on the registry yet. npm versions are immutable, so re-publishing the
+    # same one would fail the build; the guard below skips instead of erroring.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       id-token: write     # Required for OIDC npm provenance
@@ -100,5 +110,18 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci --ignore-scripts
       - run: npm run build
+      - name: Check whether this version is already published
+        id: version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "browsight@$VERSION" version > /dev/null 2>&1; then
+            echo "Version $VERSION is already on npm, nothing to publish."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $VERSION is new, publishing."
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish to npm with Provenance
+        if: steps.version.outputs.needed == 'true'
         run: npm publish --provenance --access public

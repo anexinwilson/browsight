@@ -25,7 +25,7 @@ export async function focusedTab(): Promise<chrome.tabs.Tab | undefined> {
 
 /**
  * Record the tab browsight is operating on, so a later act targets the same tab the read or switch
- * chose. Without this, read and act each re-derive the "active" tab independently — which is
+ * chose. Without this, read and act each re-derive the "active" tab independently, which is
  * unreliable when tabs span multiple windows, because the last-focused window can change between the
  * two calls and send the act to a different tab than the one that was read.
  */

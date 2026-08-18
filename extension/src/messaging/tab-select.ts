@@ -4,7 +4,7 @@
  * are unit-tested directly.
  */
 import type { Sentinel } from "@browsight/shared";
-import { type Access, type Grant, decideAccess } from "../permissions/policy.ts";
+import { type Access, decideAccess, type Grant } from "../permissions/policy.ts";
 
 export interface TabCandidate {
   readonly id: number;
@@ -47,7 +47,7 @@ export type TabResolution =
 
 /**
  * Decide what a tab selector resolves to, enforcing the whitelist: it must match exactly one open
- * tab, AND that tab's origin must be readable (whitelisted, unexpired) before a switch is allowed —
+ * tab, AND that tab's origin must be readable (whitelisted, unexpired) before a switch is allowed,
  * otherwise a `not_whitelisted` sentinel is returned and no switch happens. Pure (the access check is
  * the same `decideAccess` used everywhere else), so this enforcement is unit-tested without chrome.*.
  */
@@ -64,7 +64,7 @@ export function resolveTabSelection(
       kind: "sentinel",
       sentinel: {
         kind: "ambiguous_target",
-        hint: `no open tab matches "${select}" — call browser_tabs with no argument to see the list.`,
+        hint: `no open tab matches "${select}", call browser_tabs with no argument to see the list.`,
       },
     };
   }
@@ -73,7 +73,7 @@ export function resolveTabSelection(
       kind: "sentinel",
       sentinel: {
         kind: "ambiguous_target",
-        hint: `"${select}" matches ${matches.length} tabs — narrow it with an exact title or origin.`,
+        hint: `"${select}" matches ${matches.length} tabs, narrow it with an exact title or origin.`,
       },
     };
   }
@@ -82,7 +82,7 @@ export function resolveTabSelection(
       kind: "sentinel",
       sentinel: {
         kind: "not_whitelisted",
-        hint: `the "${target.title}" tab (${target.origin}) is not whitelisted — open the browsight popup on it and allow the site, then try again.`,
+        hint: `the "${target.title}" tab (${target.origin}) is not whitelisted, open the browsight popup on it and allow the site, then try again.`,
       },
     };
   }

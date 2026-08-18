@@ -1,6 +1,6 @@
 /**
  * Server-side post-processing: remove secrets from extracted text, estimate token cost, and
- * decide whether a page is a login wall. All pure functions, unit-tested against fixtures — they
+ * decide whether a page is a login wall. All pure functions, unit-tested against fixtures, they
  * touch no I/O so they are the easiest and most valuable part of the pipeline to test.
  */
 
@@ -41,6 +41,14 @@ export function estimateTokens(text: string): number {
 
 const LOGIN_HINTS = [/sign in/i, /log in/i, /enter your password/i, /forgot password/i];
 
+// Most walls no longer show a password box at all, they offer federated sign-in only.
+// Requiring a password field made those pages read as ordinary content.
+const OAUTH_HINTS = [
+  /continue with (google|apple|facebook|github|microsoft|email)/i,
+  /sign (in|up) with (google|apple|facebook|github|microsoft|sso)/i,
+  /log in with (google|apple|facebook|github|microsoft)/i,
+];
+
 // A genuine login wall is a short page dominated by the sign-in form. Authenticated pages are far
 // larger, so this size cap separates them from a settings page that merely has a "change password"
 // field or a "Sign in" link in shared nav.
@@ -54,12 +62,16 @@ export interface LoginSignals {
 
 /** Decide whether a page is a login wall, given signals gathered in the content script. */
 export function isLoginWall(signals: LoginSignals): boolean {
-  if (!signals.hasPasswordField) {
-    return false;
-  }
   const text = `${signals.title}\n${signals.text}`;
+  // The size cap does the heavy lifting: an authenticated page is far larger than one
+  // whose entire content is the sign-in prompt, so a "Sign in" link in shared navigation
+  // never trips this.
   if (text.length > MAX_LOGIN_WALL_CHARS) {
     return false;
   }
-  return LOGIN_HINTS.some((re) => re.test(text));
+  const hasFederatedButton = OAUTH_HINTS.some((re) => re.test(text));
+  if (!signals.hasPasswordField && !hasFederatedButton) {
+    return false;
+  }
+  return hasFederatedButton || LOGIN_HINTS.some((re) => re.test(text));
 }

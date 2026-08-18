@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 /**
- * `browsight setup` — the one-command bootstrap.
+ * `browsight setup`, the one-command bootstrap.
  *
  * Generates a token and a free loopback port, then shares them with both sides so the extension
  * auto-connects with no copy-paste: the server reads ~/.browsight/bridge.json, and the extension
@@ -12,11 +12,20 @@ import { spawnSync } from "node:child_process";
  * Paths are rooted at $BROWSIGHT_HOME (defaults to the home directory) so the flow is testable.
  */
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 
 export interface McpEntry {
   readonly command: string;
@@ -33,7 +42,7 @@ export function mcpServerEntry(serverEntryPath: string): McpEntry {
   return { command: process.execPath, args: [serverEntryPath] };
 }
 
-/** The MCP entry to write when running via npx — always re-fetches from the registry so the
+/** The MCP entry to write when running via npx, always re-fetches from the registry so the
  *  server is never tied to a temp cache path. */
 export function mcpNpxEntry(): McpEntry {
   return { command: "npx", args: ["-y", "browsight", "serve"] };
@@ -66,7 +75,7 @@ export function browsightCodexBlock(entry: McpEntry): string {
 }
 
 /** Merge the browsight table into an existing config.toml (Codex's format), replacing a previous
- *  [mcp_servers.browsight] table in place and otherwise appending — so every other setting and MCP
+ *  [mcp_servers.browsight] table in place and otherwise appending, so every other setting and MCP
  *  server in the file is preserved untouched. */
 export function withBrowsightCodex(existing: string, entry: McpEntry): string {
   const block = browsightCodexBlock(entry);
@@ -96,7 +105,7 @@ function home(): string {
   return process.env.BROWSIGHT_HOME ?? homedir();
 }
 
-/** True when running via `npx browsight` — the package is installed into the npm cache (_npx
+/** True when running via `npx browsight`, the package is installed into the npm cache (_npx
  *  directory), not a permanent location, so we must copy the extension to ~/.browsight and use
  *  the npx command form in client configs rather than an absolute path to the cache. */
 function isNpxContext(): boolean {
@@ -121,13 +130,13 @@ function bridgeConfigPath(): string {
 function clientConfigPaths(): string[] {
   const h = home();
   const candidates: ReadonlyArray<readonly [string, string, string]> = [
-    ["claude", join(h, ".claude.json"), h],
+    ["claude", join(h, ".claude.json"), join(h, ".claude")],
     ["cursor", join(h, ".cursor", "mcp.json"), join(h, ".cursor")],
     ["windsurf", join(h, ".codeium", "windsurf", "mcp_config.json"), join(h, ".codeium")],
     ["antigravity", join(h, ".gemini", "config", "mcp_config.json"), join(h, ".gemini")],
   ];
   return candidates
-    .filter(([id, p, marker]) => id === "claude" || existsSync(p) || existsSync(marker))
+    .filter(([, p, marker]) => existsSync(p) || existsSync(marker))
     .map(([, p]) => p);
 }
 
@@ -165,6 +174,29 @@ function writeJson(path: string, data: unknown): void {
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
 }
 
+/**
+ * Writes a file that holds the bridge token, readable only by its owner.
+ *
+ * The token grants full control of the user's authenticated browser, and the
+ * default file mode on macOS and Linux is world-readable, any other local account
+ * could simply read it. The mode is applied explicitly as well as at creation,
+ * because writeFileSync leaves the permissions of an existing file alone.
+ * Windows ignores POSIX modes; there the user profile ACL already restricts access.
+ */
+export function writeSecretJson(path: string, data: unknown): void {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+  if (process.platform !== "win32") {
+    chmodSync(path, 0o600);
+    try {
+      chmodSync(dir, 0o700);
+    } catch {
+      // The directory may be shared (an extension bundle); the file mode is what matters.
+    }
+  }
+}
+
 export function readJson(path: string): Record<string, unknown> {
   if (!existsSync(path)) {
     return {};
@@ -193,17 +225,19 @@ export async function runSetup(options: { readonly newPort?: boolean } = {}): Pr
   }
   const host = typeof existing.host === "string" ? existing.host : "127.0.0.1";
 
-  writeJson(bridgeConfigPath(), { host, port, token });
+  writeSecretJson(bridgeConfigPath(), { host, port, token });
 
   // Always copy the bundled extension to a permanent ~/.browsight/extension/ folder
   // so Chrome can load it from a single stable path.
   const extensionDistPath = extensionHome();
+  // Chrome keeps running the copy it loaded, so a re-run needs a reload rather than a fresh load.
+  const alreadyLoaded = existsSync(join(extensionDistPath, "manifest.json"));
   mkdirSync(extensionDistPath, { recursive: true });
   if (existsSync(EXTENSION_DIST_SRC)) {
     cpSync(EXTENSION_DIST_SRC, extensionDistPath, { recursive: true });
   }
 
-  writeJson(join(extensionDistPath, "connection.json"), { host, port, token });
+  writeSecretJson(join(extensionDistPath, "connection.json"), { host, port, token });
 
   // Write the correct MCP entry for this context.
   const entry = npx ? mcpNpxEntry() : mcpServerEntry(SERVER_ENTRY);
@@ -211,7 +245,7 @@ export async function runSetup(options: { readonly newPort?: boolean } = {}): Pr
   for (const path of clientConfigPaths()) {
     writeJson(path, withBrowsightServer(readJson(path), entry));
   }
-  // Codex uses TOML, not JSON — register it only if it looks installed, merging into any existing
+  // Codex uses TOML, not JSON, register it only if it looks installed, merging into any existing
   // config.toml so the user's other servers and settings are preserved.
   const codexPath = codexConfigPath();
   if (existsSync(codexPath) || existsSync(dirname(codexPath))) {
@@ -223,12 +257,21 @@ export async function runSetup(options: { readonly newPort?: boolean } = {}): Pr
   const lines = [
     "[ok] browsight is configured.",
     "",
-    "Load the extension into Chrome (one time):",
-    "  1. open chrome://extensions",
-    "  2. enable Developer mode (top-right)",
-    `  3. click "Load unpacked" and select:  ${extensionDistPath}`,
+    ...(alreadyLoaded
+      ? [
+          "Reload the extension so Chrome picks up this copy:",
+          "  1. Chrome menu > Extensions > Manage extensions",
+          "  2. click the reload icon on the Browsight card",
+        ]
+      : [
+          "Load the extension into Chrome:",
+          "  1. Chrome menu > Extensions > Manage extensions",
+          "  2. enable Developer mode (top-right)",
+          `  3. click "Load unpacked" and select:  ${extensionDistPath}`,
+        ]),
     "",
-    "Then restart your MCP client. Check the connection any time with `npx browsight doctor`.",
+    "Then restart your MCP client so it picks up the new configuration.",
+    "Check the connection any time with `npx browsight doctor`.",
   ];
   process.stdout.write(`${lines.join("\n")}\n`);
 }
@@ -263,7 +306,7 @@ export function runDoctor(): void {
   const firstBroken = checks.find(([, ok]) => !ok);
   process.stdout.write(
     firstBroken
-      ? `\nNext: fix "${firstBroken[0]}" — run \`npm run build\` then \`npm run setup\`.\n`
+      ? `\nNext: fix "${firstBroken[0]}", run \`npx browsight setup\`.\n`
       : "\nAll links connected. If a read still fails, whitelist the site in the browsight popup.\n",
   );
 }
@@ -322,7 +365,16 @@ if (isMain) {
     }
   } catch (err: unknown) {
     const command = process.argv[2] ?? "setup";
-    process.stderr.write(`${command} failed: ${String(err)}\n`);
+    let errMsg = "Unknown error";
+    if (err instanceof Error) {
+      errMsg = err.message;
+    } else if (typeof err === "string") {
+      errMsg = err;
+    } else {
+      // String() would flatten a thrown object to "[object Object]".
+      errMsg = inspect(err, { depth: 2 });
+    }
+    process.stderr.write(`${command} failed: ${errMsg}\n`);
     process.exit(1);
   }
 }

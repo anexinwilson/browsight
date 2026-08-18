@@ -17,7 +17,7 @@ interface RefState {
 
 /**
  * Keep the ref/element map on a stable per-tab global rather than a module-level binding. The content
- * script is re-injected on every read and every act, which re-runs this module with a fresh binding —
+ * script is re-injected on every read and every act, which re-runs this module with a fresh binding,
  * so a module-level cache can be empty at act time even immediately after a read, making every ref
  * resolve to `ref_stale`. The isolated world's `globalThis` persists across those re-injections, so
  * the act sees the references the read recorded.
@@ -106,7 +106,7 @@ function storedElementMatches(el: Element, recipe: Recipe): boolean {
 }
 
 /**
- * Every interactive element under `root`, descending into open shadow roots — the same reach the
+ * Every interactive element under `root`, descending into open shadow roots, the same reach the
  * snapshot has when it reads the page. Without this, references recorded inside a web component's
  * shadow DOM (e.g. Reddit's entire `shreddit-*` UI) can be read but never re-resolved at act time,
  * because a plain `document.querySelectorAll` does not cross shadow boundaries.
@@ -141,7 +141,7 @@ export function resolveRef(ref: string): Resolution {
   // survives a re-render that only moves the node; the role+name re-check below rejects it if the
   // node was recycled into a different control. The recipe re-resolution is the fallback.
   const stored = elements.get(id);
-  // Fast path: the stored element, but only if it still looks like the same control — a recycled
+  // Fast path: the stored element, but only if it still looks like the same control, a recycled
   // (virtualized) row keeps the same connected node while changing its accessible name.
   if (stored?.isConnected && (!recipe || storedElementMatches(stored, recipe))) {
     return { el: stored };
@@ -150,7 +150,7 @@ export function resolveRef(ref: string): Resolution {
     return {
       sentinel: {
         kind: "ref_stale",
-        hint: "the page changed — call browser_read to refresh references",
+        hint: "the page changed, call browser_read to refresh references",
       },
     };
   }
@@ -164,7 +164,7 @@ export function resolveRef(ref: string): Resolution {
     return {
       sentinel: {
         kind: "ambiguous_target",
-        hint: `${matches.length} elements still match "${recipe.role} ${recipe.name}" — re-read and use a fresh reference`,
+        hint: `${matches.length} elements still match "${recipe.role} ${recipe.name}", re-read and use a fresh reference`,
       },
     };
   }
@@ -175,7 +175,7 @@ export function resolveRef(ref: string): Resolution {
   return {
     sentinel: {
       kind: "ref_stale",
-      hint: "could not find that element — call browser_read to refresh references",
+      hint: "could not find that element, call browser_read to refresh references",
     },
   };
 }

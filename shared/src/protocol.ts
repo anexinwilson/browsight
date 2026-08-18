@@ -52,7 +52,7 @@ export type Action = z.infer<typeof ActionSchema>;
 export const VerdictSchema = z.enum(["navigated", "dom_changed", "value_set", "no_change"]);
 export type Verdict = z.infer<typeof VerdictSchema>;
 
-/** Auth handshake — the extension's first frame after connecting to the bridge. */
+/** Auth handshake, the extension's first frame after connecting to the bridge. */
 export const AuthSchema = z.object({
   type: z.literal("auth"),
   token: z.string(),
@@ -113,8 +113,8 @@ export const ActResponseSchema = z.object({
 export type ActResponse = z.infer<typeof ActResponseSchema>;
 
 /** One open browser tab, as surfaced to the agent. `access` mirrors the whitelist: "none" (not
- *  allowed — the origin and title are still shown so the user can be told to whitelist it), "read",
- *  or "full". The full URL is deliberately not sent — only the origin — to limit what leaks. */
+ *  allowed, the origin and title are still shown so the user can be told to whitelist it), "read",
+ *  or "full". The full URL is deliberately not sent, only the origin, to limit what leaks. */
 export const TabInfoSchema = z.object({
   id: z.number().int(),
   title: z.string(),

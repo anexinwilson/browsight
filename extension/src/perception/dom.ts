@@ -35,7 +35,7 @@ export function isHidden(el: Element): boolean {
     return true;
   }
   // Content marked aria-hidden or inert (the standard modal-backdrop pattern) is hidden from the
-  // accessibility tree — skip it and its subtree so the agent never acts on something behind a dialog.
+  // accessibility tree, skip it and its subtree so the agent never acts on something behind a dialog.
   if (el.getAttribute("aria-hidden") === "true" || (el as HTMLElement).inert) {
     return true;
   }
@@ -45,7 +45,7 @@ export function isHidden(el: Element): boolean {
     return true;
   }
   // `display: contents` elements generate no box of their own (a 0×0 rect) but their children DO
-  // render — so the zero-size check below must not treat them, or their subtree, as hidden.
+  // render, so the zero-size check below must not treat them, or their subtree, as hidden.
   if (style?.display === "contents") {
     return false;
   }

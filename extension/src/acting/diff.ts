@@ -59,12 +59,16 @@ export function selectVerdict(
   beforeMarkdown: string,
   afterMarkdown: string,
   valueSet: boolean,
+  navigated = false,
 ): Verdict {
+  // A URL change outranks every other signal. Submitting a form by pressing Enter inside it is a
+  // fill that leaves the page entirely, and reporting that as "value_set" tells the caller the
+  // text landed while hiding the fact that it is now looking at a different document.
+  if (navigated || action === "navigate") {
+    return "navigated";
+  }
   if (action === "fill" && valueSet) {
     return "value_set";
-  }
-  if (action === "navigate") {
-    return "navigated";
   }
   return beforeMarkdown === afterMarkdown ? "no_change" : "dom_changed";
 }

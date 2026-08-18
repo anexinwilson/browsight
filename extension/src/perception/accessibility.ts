@@ -5,7 +5,7 @@
  */
 import { computeAccessibleName, getRole } from "dom-accessibility-api";
 
-/** Strip leaked HTML tags and normalize whitespace. Accessible names/labels must be plain text —
+/** Strip leaked HTML tags and normalize whitespace. Accessible names/labels must be plain text,
  *  some sites put markup in alt/aria-label, which would otherwise surface as `<img …>` in a name. */
 function stripMarkup(value: string): string {
   let plainText = "";
