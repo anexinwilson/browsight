@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { ActResponse, ReadResponse, Ref, TabsResponse } from "@browsight/shared";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { Bridge } from "../../server/src/bridge.ts";
+import type { Bridge } from "../../server/src/bridge/bridge.ts";
 import {
   compareVersions,
   createMcpServer,
@@ -101,6 +101,8 @@ test("MCP tools expose compact read, act, and tab results through the protocol",
           markdown: "",
           refs: [],
           hasPasswordField: false,
+          truncated: false,
+          nextOffset: 0,
           sentinel: { kind: "not_whitelisted", hint: "allow this site" },
         };
       }
@@ -111,6 +113,8 @@ test("MCP tools expose compact read, act, and tab results through the protocol",
           markdown: "<!-- page-load:1 (changes on reload/navigate) -->\nSign in with your password",
           refs: [],
           hasPasswordField: true,
+          truncated: false,
+          nextOffset: 0,
         };
       }
       return {
@@ -119,6 +123,8 @@ test("MCP tools expose compact read, act, and tab results through the protocol",
         markdown: "Account key sk-123456789012 dashboard",
         refs: [],
         hasPasswordField: false,
+        truncated: false,
+        nextOffset: 0,
       };
     },
     async actActiveTab(request): Promise<ActResponse> {
@@ -281,4 +287,39 @@ test("a rebuild after startup is detected as a stale build", () => {
   // A missing or unknown entry must never claim staleness.
   assert.strictEqual(isStaleBuild("", 0), false);
   assert.strictEqual(isStaleBuild("no-such-file.mjs", 0), false);
+});
+
+test("a navigation reports the new page's controls instead of a cross-document diff", () => {
+  // Diffing a new document against the old one reports the entire old page as removed and the
+  // entire new one as appeared: pages of noise describing two unrelated documents.
+  const response: ActResponse = {
+    type: "act.response",
+    id: "nav-1",
+    verdict: "navigated",
+    diff: {
+      appeared: Array.from({ length: 180 }, (_, i) => `link ${JSON.stringify(`New ${i}`)}`),
+      removed: Array.from({ length: 160 }, (_, i) => `link ${JSON.stringify(`Old ${i}`)}`),
+      changed: [],
+    },
+    refs: Array.from({ length: 40 }, (_, i) => ref(i + 1, `Destination control ${i}`)),
+  };
+  const output = formatActResponse(response);
+
+  assert.match(output, /navigated to a new page/);
+  assert.doesNotMatch(output, /appeared:/);
+  assert.doesNotMatch(output, /removed:/);
+  assert.doesNotMatch(output, /Old 0/);
+  assert.match(output, /Destination control 0/);
+  assert.match(output, /call browser_read for the full page/);
+});
+
+test("a navigation with no readable controls still tells the caller what to do next", () => {
+  const response: ActResponse = {
+    type: "act.response",
+    id: "nav-2",
+    verdict: "navigated",
+    diff: { appeared: [], removed: [], changed: [] },
+    refs: [],
+  };
+  assert.match(formatActResponse(response), /call browser_read to see it/);
 });

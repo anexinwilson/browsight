@@ -6,13 +6,20 @@
 import type { Ref } from "@browsight/shared";
 import { elementState, fallbackName, safeName, safeRole } from "./accessibility.ts";
 import { isComposite, isHidden, isInteractive } from "./dom.ts";
+import { idFor } from "./identity.ts";
 import { makeRecipe } from "./recipe.ts";
+import { activeDialogRoot, CHROME_SELECTOR, primaryContentRoot } from "./regions.ts";
+import { type DocumentSignature, documentSignature } from "./signature.ts";
 
 export interface SnapshotResult {
   readonly markdown: string;
   readonly refs: Ref[];
   readonly hasPasswordField: boolean;
   readonly elements: Map<number, Element>;
+  /** Whether output was cut short, and where a follow-up read should resume from. */
+  readonly truncated: boolean;
+  readonly nextOffset: number;
+  readonly signature: DocumentSignature;
 }
 
 const SKIP_TAGS = new Set(["script", "style", "noscript", "template", "svg"]);
@@ -35,57 +42,20 @@ const BLOCK_TAGS = new Set([
 const MAX_SNAPSHOT_CHARS = 16_000;
 export type SnapshotMode = "full" | "main";
 
-function activeDialogRoot(doc: Document): Element | null {
-  const active = doc.activeElement;
-  const dialogs = Array.from(
-    doc.querySelectorAll("dialog[open], [role='dialog'], [aria-modal='true']"),
-  ).filter((element) => !isHidden(element));
-  if (active !== null && active !== doc.body) {
-    const focusedDialog = dialogs.findLast((element) => element.contains(active));
-    if (focusedDialog) {
-      return focusedDialog;
-    }
-  }
-  return (
-    dialogs.findLast((element) => element.matches("dialog[open], [aria-modal='true']")) ?? null
-  );
-}
-
-function primaryContentRoot(doc: Document): Element | null {
-  const candidates = Array.from(doc.querySelectorAll("main, [role='main']"));
-  let best: { readonly element: Element; readonly score: number } | null = null;
-  for (const element of candidates) {
-    if (isHidden(element)) {
-      continue;
-    }
-    const text = (element.textContent ?? "").trim().length;
-    const controls = element.querySelectorAll(
-      "a[href], button, input, select, textarea, [contenteditable='true']",
-    ).length;
-    const score = text + controls * 80;
-    if (!best || score > best.score) {
-      best = { element, score };
-    }
-  }
-  return best?.element ?? null;
-}
-
 /**
- * Regions that frame a page rather than carry its content. Matched by landmark role
- * and tag only, never by site-specific ids or classes, so this stays honest on any
- * site. A page with no semantic markup at all gets no benefit, which is the correct
- * outcome: guessing would risk dropping real content.
+ * What became of one emitted line: kept in the output window, skipped because it falls outside the
+ * requested window or does not match the query (its children are still visited, so offsets stay
+ * stable), or stopped because the window is now full.
  */
-const CHROME_SELECTOR =
-  "nav, header, footer, aside, [role='navigation'], [role='banner'], [role='contentinfo'], [role='complementary']";
+type EmitStatus = "kept" | "skipped" | "stopped";
 
 /** Build the semantic snapshot of `doc` (the live document by default). */
 class SnapshotBuilder {
   refs: Ref[] = [];
   out: string[] = [];
+  header: string[] = [];
   ordinals = new Map<string, number>();
   line = "";
-  nextId = 1;
   hasPasswordField = false;
   lastRefName = "";
   private lastLink: { role: string; name: string; href: string } | null = null;
@@ -93,42 +63,40 @@ class SnapshotBuilder {
   elements = new Map<number, Element>();
   truncated = false;
   outputChars = 0;
+  /** Characters the walk has produced document-wide, including those skipped before `offset`. */
+  producedChars = 0;
+  nextOffset = 0;
 
   private readonly doc: Document;
 
   private readonly mode: SnapshotMode;
 
-  constructor(doc: Document, mode: SnapshotMode) {
+  private readonly offset: number;
+
+  /** Lowercased search text; when set, only matching lines are kept. */
+  private readonly query: string;
+
+  constructor(doc: Document, mode: SnapshotMode, offset: number, query: string) {
     this.doc = doc;
     this.mode = mode;
+    this.query = query.trim().toLowerCase();
+    // A search covers the whole document, so a window into one part of it would be meaningless.
+    this.offset = this.query ? 0 : Math.max(0, offset);
   }
 
   build(): SnapshotResult {
-    const title = this.doc.title.trim();
-    if (title) {
-      this.emit(`# ${title}`);
-    }
-
-    // A modal is the primary content while it is open, but "full" must still mean the
-    // whole page, scoping it to the dialog silently hid everything behind it, with no
-    // way for the caller to see what it was missing.
+    // A modal is the primary content while it is open, but "full" must still mean the whole page:
+    // scoping it to the dialog silently hid everything behind it, with no way for the caller to see
+    // what it was missing.
     const openDialog = activeDialogRoot(this.doc);
     const dialog = this.mode === "main" ? openDialog : null;
     const primary = !dialog && this.mode === "main" ? primaryContentRoot(this.doc) : null;
-    if (dialog) {
-      this.emit(
-        "[focused on active dialog; call browser_read with mode=full to see the page behind it]",
-      );
-    } else if (openDialog) {
-      this.emit("[a dialog is open over this page; it may block interaction until dismissed]");
-    } else if (this.mode === "main") {
-      this.emit(
-        primary ? "[focused on primary content]" : "[no primary landmark; showing full page]",
-      );
-    }
-    // "main" with no landmark used to mean "the whole page", which on a site like a
-    // storefront is mostly navigation, footer filters and banners. Skip those framing
-    // regions instead so the mode keeps its meaning everywhere.
+
+    this.writeHeader(dialog, openDialog, primary);
+
+    // "main" with no landmark used to mean "the whole page", which on a site like a storefront is
+    // mostly navigation, footer filters and banners. Skip those framing regions instead so the mode
+    // keeps its meaning everywhere.
     this.skipChrome = this.mode === "main" && !dialog && !primary;
     const root = dialog ?? primary ?? this.doc.body;
     if (root) {
@@ -137,10 +105,14 @@ class SnapshotBuilder {
     this.flush();
 
     if (this.truncated) {
-      this.out.push("[snapshot truncated; narrow the page or scroll to inspect more]");
+      this.out.push(
+        this.query
+          ? "[too many matches to show; use a more specific query]"
+          : `[snapshot truncated here; call browser_read again with offset=${this.nextOffset} for the next part, or pass query= to search the whole page]`,
+      );
     }
 
-    const markdown = this.out
+    const markdown = [...this.header, ...this.out]
       .join("\n")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
@@ -149,18 +121,74 @@ class SnapshotBuilder {
       refs: this.refs,
       hasPasswordField: this.hasPasswordField,
       elements: this.elements,
+      truncated: this.truncated,
+      nextOffset: this.truncated ? this.nextOffset : 0,
+      signature: documentSignature(this.doc),
     };
   }
 
-  private emit(text: string): boolean {
-    const cost = text.length + (this.out.length > 0 ? 1 : 0);
+  /**
+   * Announce what this snapshot is: which page, which region of it, and how it was narrowed.
+   *
+   * These lines sit outside the output window, so they frame every page of a paginated read rather
+   * than scrolling off it after the first.
+   */
+  private writeHeader(
+    dialog: Element | null,
+    openDialog: Element | null,
+    primary: Element | null,
+  ): void {
+    const title = this.doc.title.trim();
+    if (title) {
+      this.header.push(`# ${title}`);
+    }
+    if (dialog) {
+      this.header.push(
+        "[focused on active dialog; call browser_read with mode=full to see the page behind it]",
+      );
+    } else if (openDialog) {
+      this.header.push(
+        "[a dialog is open over this page; it may block interaction until dismissed]",
+      );
+    } else if (this.mode === "main") {
+      this.header.push(
+        primary ? "[focused on primary content]" : "[no primary landmark; showing full page]",
+      );
+    }
+    if (this.offset > 0) {
+      this.header.push(`[continued from offset ${this.offset}]`);
+    }
+    if (this.query) {
+      this.header.push(`[showing only lines matching "${this.query}"; whole page searched]`);
+    }
+  }
+
+  /**
+   * Append one line, honouring the requested window. Text before `offset` is counted but not kept,
+   * so a follow-up read resumes exactly where the last one stopped while ids and ordinals stay
+   * identical to an unpaginated walk: a `#id` means the same element on every page.
+   */
+  private emit(text: string): EmitStatus {
+    // A search walks the entire page and pays only for what matches, so the cap limits results
+    // rather than reading depth. Non-matching lines cost nothing and their children are still
+    // visited, which is what lets a query find text far below where a plain read would stop.
+    if (this.query && !text.toLowerCase().includes(this.query)) {
+      return "skipped";
+    }
+    const cost = text.length + (this.producedChars > 0 ? 1 : 0);
+    const startedAt = this.producedChars;
+    this.producedChars += cost;
+    if (this.producedChars <= this.offset) {
+      return "skipped";
+    }
     if (this.outputChars + cost > MAX_SNAPSHOT_CHARS) {
       this.truncated = true;
-      return false;
+      this.nextOffset = startedAt;
+      return "stopped";
     }
     this.out.push(text);
     this.outputChars += cost;
-    return true;
+    return "kept";
   }
 
   private flush(): void {
@@ -202,20 +230,26 @@ class SnapshotBuilder {
     }
     this.lastLink = href ? { role, name, href } : null;
 
-    const id = this.nextId++;
+    const id = idFor(el);
     const state = elementState(el);
-    if (!this.emit(`[${role} ${JSON.stringify(name)} #${id}]`)) {
+    const status = this.emit(`[${role} ${JSON.stringify(name)} #${id}]`);
+    if (status === "stopped") {
       return;
     }
-    this.refs.push({
-      id,
-      role,
-      name,
-      recipe: makeRecipe(el, role, rawName, ordinal),
-      ...(state ? { state } : {}),
-    });
-    this.elements.set(id, el);
-    this.lastRefName = name;
+    // A reference is only offered when the caller can actually see it. Content before the window is
+    // still descended into, because skipping it would change the character counts that later
+    // offsets are measured against.
+    if (status === "kept") {
+      this.refs.push({
+        id,
+        role,
+        name,
+        recipe: makeRecipe(el, role, rawName, ordinal),
+        ...(state ? { state } : {}),
+      });
+      this.elements.set(id, el);
+      this.lastRefName = name;
+    }
     if (isComposite(el)) {
       for (const child of Array.from(el.childNodes)) {
         this.walk(child);
@@ -344,7 +378,16 @@ class SnapshotBuilder {
 /** Build the semantic snapshot of `doc` (the live document by default). */
 export function buildSnapshot(
   doc: Document = document,
-  options: { readonly mode?: SnapshotMode } = {},
+  options: {
+    readonly mode?: SnapshotMode;
+    readonly offset?: number;
+    readonly query?: string;
+  } = {},
 ): SnapshotResult {
-  return new SnapshotBuilder(doc, options.mode ?? "full").build();
+  return new SnapshotBuilder(
+    doc,
+    options.mode ?? "full",
+    options.offset ?? 0,
+    options.query ?? "",
+  ).build();
 }

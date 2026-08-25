@@ -13,29 +13,50 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-
-import { restoreArgv1 } from "../../scripts/mock_helper.ts";
-
 import {
   browsightCodexBlock,
   generateToken,
   mcpNpxEntry,
   mcpServerEntry,
-  pickPort,
-  readJson,
-  runDoctor,
-  runSetup,
-  tryPort,
+  parseClientFilter,
   withBrowsightCodex,
   withBrowsightServer,
-} from "../../scripts/setup.ts";
+  withoutBrowsightCodex,
+  withoutBrowsightServer,
+} from "../../scripts/clients.ts";
+import { output } from "../../scripts/output.ts";
+import { pickPort, readJson, tryPort } from "../../scripts/paths.ts";
+import { runDoctor, runSetup } from "../../scripts/setup.ts";
+import { restoreArgv1 } from "./mock_helper.ts";
 
 restoreArgv1();
 
+/**
+ * A stand-in for `extension/dist`, so tests never depend on a build having run. CI runs the test
+ * step before `npm run build`, so anything reaching for real build output fails on a fresh checkout.
+ */
+function createFakeBuild(): string {
+  const dir = mkdtempSync(join(scratchDir(), "fake_dist_"));
+  writeFileSync(join(dir, "manifest.json"), JSON.stringify({ name: "browsight" }));
+  writeFileSync(join(dir, "content.js"), "// built content script");
+  return dir;
+}
+
+/**
+ * The scratch directory every temporary fixture lives under.
+ *
+ * It is gitignored, so it does not exist on a fresh checkout. Creating it here rather than at each
+ * call site is what stops a fixture from assuming a directory that only exists on a machine where
+ * the suite has run before.
+ */
+function scratchDir(): string {
+  const dir = join(process.cwd(), "scratch");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 function createTempHome(): string {
-  const scratchDir = join(process.cwd(), "scratch");
-  mkdirSync(scratchDir, { recursive: true });
-  return mkdtempSync(join(scratchDir, "test_home_"));
+  return mkdtempSync(join(scratchDir(), "test_home_"));
 }
 
 test("generateToken returns a long, unique token", () => {
@@ -126,17 +147,16 @@ test("runSetup generates token/port and writes config files", async () => {
   writeFileSync(join(tempHome, ".claude.json"), JSON.stringify({ mcpServers: {} }));
   writeFileSync(join(tempHome, ".codex", "config.toml"), "initial = true\n");
 
-  const originalWrite = process.stdout.write;
+  const originalWrite = output.write;
   let stdoutOutput = "";
-  process.stdout.write = (chunk: any) => {
+  output.write = (chunk: string) => {
     stdoutOutput += chunk;
-    return true;
   };
 
   try {
     await runSetup();
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     if (originalHome) {
       process.env.BROWSIGHT_HOME = originalHome;
     } else {
@@ -145,7 +165,7 @@ test("runSetup generates token/port and writes config files", async () => {
   }
 
   // Assertions
-  assert.match(stdoutOutput, /\[ok\] browsight is configured/);
+  assert.match(stdoutOutput, /\[ok\] browsight registered with/);
 
   // Check that bridge.json was written
   const bridgeJson = JSON.parse(readFileSync(join(tempHome, ".browsight", "bridge.json"), "utf8"));
@@ -169,17 +189,16 @@ test("runDoctor checks status of configuration", async () => {
   const originalHome = process.env.BROWSIGHT_HOME;
   process.env.BROWSIGHT_HOME = tempHome;
 
-  const originalWrite = process.stdout.write;
+  const originalWrite = output.write;
   let stdoutOutput = "";
-  process.stdout.write = (chunk: any) => {
+  output.write = (chunk: string) => {
     stdoutOutput += chunk;
-    return true;
   };
 
   try {
     runDoctor();
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     if (originalHome) {
       process.env.BROWSIGHT_HOME = originalHome;
     } else {
@@ -200,11 +219,10 @@ test("runDoctor checks status of successful setup", async () => {
   const originalHome = process.env.BROWSIGHT_HOME;
   process.env.BROWSIGHT_HOME = tempHome;
 
-  const originalWrite = process.stdout.write;
+  const originalWrite = output.write;
   let stdoutOutput = "";
-  process.stdout.write = (chunk: any) => {
+  output.write = (chunk: string) => {
     stdoutOutput += chunk;
-    return true;
   };
 
   try {
@@ -212,7 +230,7 @@ test("runDoctor checks status of successful setup", async () => {
     stdoutOutput = ""; // reset
     runDoctor();
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     if (originalHome) {
       process.env.BROWSIGHT_HOME = originalHome;
     } else {
@@ -350,9 +368,9 @@ test("tryPort falls back to port argument if server address is not an object", a
     process.execPath,
     [
       "--import",
-      "./scripts/mock_helper.ts",
+      "./test/scripts/mock_helper.ts",
       "-e",
-      "import { tryPort } from './scripts/setup.ts'; import assert from 'assert'; assert.equal(await tryPort(12345), 12345);",
+      "import { tryPort } from './scripts/paths.ts'; import assert from 'assert'; assert.equal(await tryPort(12345), 12345);",
     ],
     {
       env: {
@@ -375,9 +393,9 @@ test("tryPort falls back to port argument if server address is null", async () =
     process.execPath,
     [
       "--import",
-      "./scripts/mock_helper.ts",
+      "./test/scripts/mock_helper.ts",
       "-e",
-      "import { tryPort } from './scripts/setup.ts'; import assert from 'assert'; assert.equal(await tryPort(12345), 12345);",
+      "import { tryPort } from './scripts/paths.ts'; import assert from 'assert'; assert.equal(await tryPort(12345), 12345);",
     ],
     {
       env: {
@@ -403,8 +421,8 @@ test("runSetup reuse of existing token, port, and host", async () => {
   mkdirSync(join(tempHome, ".cursor"), { recursive: true });
   writeFileSync(join(tempHome, ".claude.json"), JSON.stringify({ mcpServers: {} }));
 
-  const originalWrite = process.stdout.write;
-  process.stdout.write = () => true;
+  const originalWrite = output.write;
+  output.write = () => {};
 
   try {
     await runSetup();
@@ -420,7 +438,7 @@ test("runSetup reuse of existing token, port, and host", async () => {
     assert.equal(bridge2.port, bridge1.port);
     assert.equal(bridge2.host, bridge1.host);
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
     rmSync(tempHome, { recursive: true, force: true });
   }
@@ -436,15 +454,15 @@ test("runSetup can move a stale installation to a fresh port", async () => {
     join(configDir, "bridge.json"),
     JSON.stringify({ host: "127.0.0.1", port: 60928, token: "keep-this-token" }),
   );
-  const originalWrite = process.stdout.write;
-  process.stdout.write = () => true;
+  const originalWrite = output.write;
+  output.write = () => {};
   try {
     await runSetup({ newPort: true });
     const updated = JSON.parse(readFileSync(join(configDir, "bridge.json"), "utf8"));
     assert.notEqual(updated.port, 60928);
     assert.equal(updated.token, "keep-this-token");
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
     rmSync(tempHome, { recursive: true, force: true });
   }
@@ -458,15 +476,15 @@ test("runSetup when client config file exists but its directory marker is also p
   mkdirSync(join(tempHome, ".cursor"), { recursive: true });
   writeFileSync(join(tempHome, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: {} }));
 
-  const originalWrite = process.stdout.write;
-  process.stdout.write = () => true;
+  const originalWrite = output.write;
+  output.write = () => {};
 
   try {
     await runSetup();
     const cursorJson = JSON.parse(readFileSync(join(tempHome, ".cursor", "mcp.json"), "utf8"));
     assert.ok(cursorJson.mcpServers.browsight);
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
     rmSync(tempHome, { recursive: true, force: true });
   }
@@ -479,15 +497,15 @@ test("runSetup when Codex directory exists but config.toml does not", async () =
 
   mkdirSync(join(tempHome, ".codex"), { recursive: true });
 
-  const originalWrite = process.stdout.write;
-  process.stdout.write = () => true;
+  const originalWrite = output.write;
+  output.write = () => {};
 
   try {
     await runSetup();
     const codexToml = readFileSync(join(tempHome, ".codex", "config.toml"), "utf8");
     assert.match(codexToml, /\[mcp_servers\.browsight\]/);
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
     rmSync(tempHome, { recursive: true, force: true });
   }
@@ -504,17 +522,16 @@ test("runDoctor checks status of configuration with only Codex registered", asyn
     "[mcp_servers.browsight]\ncommand = 'node'\nargs = []\n",
   );
 
-  const originalWrite = process.stdout.write;
+  const originalWrite = output.write;
   let stdoutOutput = "";
-  process.stdout.write = (chunk: any) => {
+  output.write = (chunk: string) => {
     stdoutOutput += chunk;
-    return true;
   };
 
   try {
     runDoctor();
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
     rmSync(tempHome, { recursive: true, force: true });
   }
@@ -530,17 +547,16 @@ test("runDoctor when Codex config exists but is not registered", async () => {
   mkdirSync(join(tempHome, ".codex"), { recursive: true });
   writeFileSync(join(tempHome, ".codex", "config.toml"), "[some_other_table]\nkey = 'value'\n");
 
-  const originalWrite = process.stdout.write;
+  const originalWrite = output.write;
   let stdoutOutput = "";
-  process.stdout.write = (chunk: any) => {
+  output.write = (chunk: string) => {
     stdoutOutput += chunk;
-    return true;
   };
 
   try {
     runDoctor();
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
     rmSync(tempHome, { recursive: true, force: true });
   }
@@ -556,17 +572,16 @@ test("runDoctor when client config exists but lacks mcpServers key", async () =>
   mkdirSync(join(tempHome, ".cursor"), { recursive: true });
   writeFileSync(join(tempHome, ".claude.json"), JSON.stringify({}));
 
-  const originalWrite = process.stdout.write;
+  const originalWrite = output.write;
   let stdoutOutput = "";
-  process.stdout.write = (chunk: any) => {
+  output.write = (chunk: string) => {
     stdoutOutput += chunk;
-    return true;
   };
 
   try {
     runDoctor();
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
     rmSync(tempHome, { recursive: true, force: true });
   }
@@ -593,11 +608,10 @@ test("runDoctor secondary manifest and connection check when EXTENSION_DIST_SRC 
     "[mcp_servers.browsight]\ncommand = 'node'\nargs = []\n",
   );
 
-  const originalWrite = process.stdout.write;
+  const originalWrite = output.write;
   let stdoutOutput = "";
-  process.stdout.write = (chunk: any) => {
+  output.write = (chunk: string) => {
     stdoutOutput += chunk;
-    return true;
   };
 
   // Temporarily rename the real extension/dist to force the secondary check
@@ -612,7 +626,7 @@ test("runDoctor secondary manifest and connection check when EXTENSION_DIST_SRC 
   try {
     runDoctor();
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
     if (distExists) {
       renameSync(backupDist, realDist);
@@ -629,11 +643,10 @@ test("runDoctor when extension build and connection files are completely missing
   const originalHome = process.env.BROWSIGHT_HOME;
   process.env.BROWSIGHT_HOME = tempHome;
 
-  const originalWrite = process.stdout.write;
+  const originalWrite = output.write;
   let stdoutOutput = "";
-  process.stdout.write = (chunk: any) => {
+  output.write = (chunk: string) => {
     stdoutOutput += chunk;
-    return true;
   };
 
   // Temporarily rename the real extension/dist
@@ -647,7 +660,7 @@ test("runDoctor when extension build and connection files are completely missing
   try {
     runDoctor();
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
     if (distExists) {
       renameSync(backupDist, realDist);
@@ -664,11 +677,10 @@ test("runDoctor executes safely when BROWSIGHT_HOME is undefined", () => {
   process.env.BROWSIGHT_HOME = undefined;
   delete process.env.BROWSIGHT_HOME;
 
-  const originalWrite = process.stdout.write;
+  const originalWrite = output.write;
   let stdoutOutput = "";
-  process.stdout.write = (chunk: any) => {
+  output.write = (chunk: string) => {
     stdoutOutput += chunk;
-    return true;
   };
 
   try {
@@ -676,7 +688,7 @@ test("runDoctor executes safely when BROWSIGHT_HOME is undefined", () => {
       runDoctor();
     });
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
   }
 
@@ -727,7 +739,7 @@ test("setup detects npx cache and compiled execution paths", async () => {
   // Simulate execution from an npx cache path.
   const child1 = spawn(
     process.execPath,
-    ["--import", "./scripts/mock_helper.ts", join(REPO_ROOT, "scripts", "setup.ts")],
+    ["--import", "./test/scripts/mock_helper.ts", join(REPO_ROOT, "scripts", "setup.ts")],
     {
       env: {
         ...process.env,
@@ -748,7 +760,7 @@ test("setup detects npx cache and compiled execution paths", async () => {
   // 2. Run simulating .cache/node
   const child2 = spawn(
     process.execPath,
-    ["--import", "./scripts/mock_helper.ts", join(REPO_ROOT, "scripts", "setup.ts")],
+    ["--import", "./test/scripts/mock_helper.ts", join(REPO_ROOT, "scripts", "setup.ts")],
     {
       env: {
         ...process.env,
@@ -777,12 +789,12 @@ test("token files are written owner-only", async () => {
   const originalHome = process.env.BROWSIGHT_HOME;
   process.env.BROWSIGHT_HOME = tempHome;
 
-  const originalWrite = process.stdout.write;
-  process.stdout.write = () => true;
+  const originalWrite = output.write;
+  output.write = () => {};
   try {
     await runSetup();
   } finally {
-    process.stdout.write = originalWrite;
+    output.write = originalWrite;
     process.env.BROWSIGHT_HOME = originalHome;
   }
 
@@ -798,4 +810,188 @@ test("token files are written owner-only", async () => {
   }
 
   rmSync(tempHome, { recursive: true, force: true });
+});
+
+test("--client narrows which MCP clients browsight registers with", () => {
+  assert.deepStrictEqual(parseClientFilter([]), null, "no flag means no filter");
+  assert.deepStrictEqual(parseClientFilter(["--client=claude"]), ["claude"]);
+  assert.deepStrictEqual(parseClientFilter(["--client", "claude,cursor"]), ["claude", "cursor"]);
+  assert.deepStrictEqual(parseClientFilter(["--client=Claude, Codex "]), ["claude", "codex"]);
+  assert.throws(() => parseClientFilter(["--client=notaclient"]), /unknown client/);
+});
+
+test("stop removes browsight from client configs and leaves other servers alone", () => {
+  const config = {
+    mcpServers: { other: { command: "x" }, browsight: { command: "node" } },
+    unrelated: true,
+  };
+  const stripped = withoutBrowsightServer(config as any) as any;
+  assert.deepStrictEqual(Object.keys(stripped.mcpServers), ["other"]);
+  assert.strictEqual(stripped.unrelated, true);
+  // A config that never had browsight is returned untouched.
+  const none = { mcpServers: { other: {} } };
+  assert.strictEqual(withoutBrowsightServer(none as any), none);
+});
+
+test("stop removes the codex table and keeps the rest of the file", () => {
+  const toml = [
+    "[general]",
+    'theme = "dark"',
+    "",
+    "[mcp_servers.browsight]",
+    'command = "npx"',
+    "",
+    "[mcp_servers.other]",
+    'command = "y"',
+  ].join("\n");
+  const stripped = withoutBrowsightCodex(toml);
+  assert.ok(!stripped.includes("browsight"), "browsight table is gone");
+  assert.ok(stripped.includes("[general]"), "other tables survive");
+  assert.ok(stripped.includes("[mcp_servers.other]"), "other servers survive");
+  assert.strictEqual(withoutBrowsightCodex("[general]"), "[general]");
+});
+
+test("build refreshes an existing install but never creates one", async (t) => {
+  const { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } = await import(
+    "node:fs"
+  );
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const home = mkdtempSync(join(tmpdir(), "browsight-install-"));
+  const previous = process.env.BROWSIGHT_HOME;
+  process.env.BROWSIGHT_HOME = home;
+  t.after(() => {
+    if (previous === undefined) {
+      delete process.env.BROWSIGHT_HOME;
+    } else {
+      process.env.BROWSIGHT_HOME = previous;
+    }
+  });
+
+  const { isExtensionInstalled, refreshInstalledExtension, installExtension } = await import(
+    "../../scripts/extension-install.ts"
+  );
+  const fakeBuild = createFakeBuild();
+
+  // Nothing installed: building must not create files in a home directory.
+  assert.equal(isExtensionInstalled(), false);
+  assert.equal(refreshInstalledExtension(fakeBuild), false);
+  assert.equal(existsSync(join(home, ".browsight", "extension", "manifest.json")), false);
+
+  // Once installed, a build refreshes it, and the machine-specific secret survives.
+  installExtension(fakeBuild);
+  assert.equal(isExtensionInstalled(), true);
+  const connection = join(home, ".browsight", "extension", "connection.json");
+  mkdirSync(join(home, ".browsight", "extension"), { recursive: true });
+  writeFileSync(connection, '{"port":1234}');
+  assert.equal(refreshInstalledExtension(fakeBuild), true);
+  assert.equal(readFileSync(connection, "utf8"), '{"port":1234}');
+});
+
+test("setup always shows the extension folder, on a first run and on a re-run", async () => {
+  // Whether Chrome currently has the extension loaded is not knowable from here: the folder exists
+  // either way. Guessing told users who had removed the extension to reload a card that was not
+  // there, and never printed the path they needed to load it again.
+  const tempHome = createTempHome();
+  const originalHome = process.env.BROWSIGHT_HOME;
+  process.env.BROWSIGHT_HOME = tempHome;
+
+  const originalWrite = output.write;
+  const runs: string[] = [];
+
+  try {
+    for (let run = 0; run < 2; run++) {
+      let captured = "";
+      output.write = (chunk: string) => {
+        captured += chunk;
+      };
+      await runSetup();
+      output.write = originalWrite;
+      runs.push(captured);
+    }
+  } finally {
+    output.write = originalWrite;
+    if (originalHome) {
+      process.env.BROWSIGHT_HOME = originalHome;
+    } else {
+      process.env.BROWSIGHT_HOME = undefined;
+    }
+  }
+
+  const expectedFolder = join(tempHome, ".browsight", "extension");
+  for (const [index, out] of runs.entries()) {
+    const which = index === 0 ? "first run" : "re-run";
+    assert.ok(out.includes(expectedFolder), `${which} must print the extension folder`);
+    assert.match(out, /Load unpacked/, `${which} must say what to do with it`);
+  }
+});
+
+test("a build newer than the install is reported as stale", async () => {
+  // The failure that looks like nothing is wrong: the folder is there and the extension reloads,
+  // but Chrome keeps running old code because the build never reached the install.
+  const { utimesSync } = await import("node:fs");
+  const tempHome = createTempHome();
+  const originalHome = process.env.BROWSIGHT_HOME;
+  process.env.BROWSIGHT_HOME = tempHome;
+
+  const { installExtension, installedExtensionIsStale } = await import(
+    "../../scripts/extension-install.ts"
+  );
+  const fakeBuild = createFakeBuild();
+
+  try {
+    // Nothing installed yet: there is no drift to report.
+    assert.equal(installedExtensionIsStale(fakeBuild), false);
+
+    installExtension(fakeBuild);
+    assert.equal(installedExtensionIsStale(fakeBuild), false, "a fresh install is current");
+
+    const future = new Date(Date.now() + 60_000);
+    utimesSync(join(fakeBuild, "content.js"), future, future);
+    assert.equal(installedExtensionIsStale(fakeBuild), true, "a newer build must read as stale");
+  } finally {
+    if (originalHome) {
+      process.env.BROWSIGHT_HOME = originalHome;
+    } else {
+      process.env.BROWSIGHT_HOME = undefined;
+    }
+  }
+});
+
+test("doctor sends a stopped install to start, not setup", async () => {
+  // `stop` promises browsight stays off until `start`. Pointing at `setup` would contradict it.
+  const tempHome = createTempHome();
+  const originalHome = process.env.BROWSIGHT_HOME;
+  process.env.BROWSIGHT_HOME = tempHome;
+
+  // Everything except registration must be healthy, so registration is the first broken link.
+  const { installExtension } = await import("../../scripts/extension-install.ts");
+  const fakeBuild = createFakeBuild();
+  const fakeServerEntry = join(fakeBuild, "index.mjs");
+  writeFileSync(fakeServerEntry, "// built server");
+  installExtension(fakeBuild);
+  mkdirSync(join(tempHome, ".browsight"), { recursive: true });
+  const connection = JSON.stringify({ host: "127.0.0.1", port: 8137, token: "t" });
+  writeFileSync(join(tempHome, ".browsight", "bridge.json"), connection);
+  writeFileSync(join(tempHome, ".browsight", "extension", "connection.json"), connection);
+
+  const originalWrite = output.write;
+  let captured = "";
+  try {
+    output.write = (chunk: string) => {
+      captured += chunk;
+    };
+    runDoctor({ serverEntry: fakeServerEntry, extensionDist: fakeBuild });
+  } finally {
+    output.write = originalWrite;
+    if (originalHome) {
+      process.env.BROWSIGHT_HOME = originalHome;
+    } else {
+      process.env.BROWSIGHT_HOME = undefined;
+    }
+  }
+
+  assert.match(captured, /\[missing\] MCP server registered in a client config/);
+  assert.match(captured, /run `npx browsight start`/);
 });

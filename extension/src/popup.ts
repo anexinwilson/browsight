@@ -1,23 +1,16 @@
-import { TIMER_OPTIONS, type Tier } from "./permissions/policy.ts";
 /**
  * The toolbar popup: grant the current site a tier (read-only / full-control) with an optional
  * timer, and manage existing grants. Runs `chrome.permissions.request` from the button click (a
  * user gesture), so Chrome's native host-permission prompt is shown.
  */
+import type { Tier } from "./permissions/policy.ts";
 import { grantSite, listGrants, revokeSite } from "./permissions/storage.ts";
+import { el, renderTimerOptions } from "./ui/elements.ts";
 
 let selectedTier: Tier = "full";
 
 function reportUiError(error: unknown): void {
   console.error("browsight popup failed", error);
-}
-
-function el<T extends HTMLElement>(id: string): T {
-  const node = document.getElementById(id);
-  if (!node) {
-    throw new Error(`missing #${id}`);
-  }
-  return node as T;
 }
 
 async function currentOrigin(): Promise<string | null> {
@@ -68,12 +61,7 @@ async function init(): Promise<void> {
   const origin = await currentOrigin();
   el<HTMLDivElement>("origin").textContent = origin ?? "(no site)";
   const timer = el<HTMLSelectElement>("timer");
-  for (const opt of TIMER_OPTIONS) {
-    const o = document.createElement("option");
-    o.value = String(opt.ms);
-    o.textContent = opt.label;
-    timer.append(o);
-  }
+  renderTimerOptions(timer);
   const tierRow = el<HTMLFieldSetElement>("tier");
   const buttons = Array.from(tierRow.querySelectorAll("button"));
   for (const btn of buttons) {

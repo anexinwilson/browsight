@@ -43,3 +43,20 @@ test("selectVerdict classifies each outcome", () => {
   assert.equal(selectVerdict("click", "a", "a", false), "no_change");
   assert.equal(selectVerdict("click", "a", "b", false), "dom_changed");
 });
+
+test("a change below the snapshot cap is reported even when the markdown compares equal", () => {
+  // On a dense page the markdown is truncated, so two genuinely different pages produce identical
+  // strings. Before this signal, a scroll that loaded a thousand comments reported "no_change" and
+  // told the caller nothing had loaded.
+  const capped = "identical truncated markdown";
+  assert.equal(selectVerdict("scroll", capped, capped, false, false, true), "dom_changed");
+  assert.equal(selectVerdict("scroll", capped, capped, false, false, false), "no_change");
+});
+
+test("a navigation still outranks a content change", () => {
+  assert.equal(selectVerdict("click", "before", "after", false, true, true), "navigated");
+});
+
+test("a successful fill still reports value_set when the page also grew", () => {
+  assert.equal(selectVerdict("fill", "before", "after", true, false, true), "value_set");
+});

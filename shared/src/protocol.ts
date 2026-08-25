@@ -72,6 +72,10 @@ export const ReadRequestSchema = z.object({
   id: z.string(),
   url: z.string().nullable().default(null),
   mode: z.enum(["full", "main"]).default("full"),
+  /** Resume a truncated read: skip this many characters of page output. */
+  offset: z.number().int().nonnegative().default(0),
+  /** Keep only lines matching this text, searched across the whole page rather than one window. */
+  query: z.string().nullable().default(null),
   schema: z.unknown().nullable().default(null),
 });
 export type ReadRequest = z.infer<typeof ReadRequestSchema>;
@@ -82,9 +86,19 @@ export const ReadResponseSchema = z.object({
   markdown: z.string(),
   refs: z.array(RefSchema),
   hasPasswordField: z.boolean().default(false),
+  /** Set when output was cut short, with the offset a follow-up read should resume from. */
+  truncated: z.boolean().default(false),
+  nextOffset: z.number().int().nonnegative().default(0),
   sentinel: SentinelSchema.optional(),
 });
 export type ReadResponse = z.infer<typeof ReadResponseSchema>;
+
+/** One field of a batch fill: which control, and what to put in it. */
+export const FieldFillSchema = z.object({
+  ref: z.string(),
+  value: z.string(),
+});
+export type FieldFill = z.infer<typeof FieldFillSchema>;
 
 export const ActRequestSchema = z.object({
   type: z.literal("act.request"),
@@ -92,6 +106,12 @@ export const ActRequestSchema = z.object({
   ref: z.string(),
   action: ActionSchema,
   value: z.string().optional(),
+  /**
+   * Fill several controls in one request. Each is resolved just before it is filled, so a re-render
+   * caused by an earlier field cannot invalidate the ones after it, and the page is settled once at
+   * the end rather than after every field.
+   */
+  fields: z.array(FieldFillSchema).optional(),
 });
 export type ActRequest = z.infer<typeof ActRequestSchema>;
 

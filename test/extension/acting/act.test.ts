@@ -44,31 +44,22 @@ Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
   configurable: true,
 });
 
-// JSDOM has InputEvent and MouseEvent but PointerEvent might be missing or fail if view is globalThis.
-const OriginalPointerEvent = dom.window.PointerEvent || dom.window.MouseEvent || dom.window.Event;
-gThis.PointerEvent = class PointerEvent extends (OriginalPointerEvent as any) {
-  constructor(type: string, init?: any) {
-    if (init && init.view === globalThis) {
-      init.view = dom.window;
+// jsdom supplies all of these. Subclassing only to redirect `view` from the Node global to the
+// jsdom window, which jsdom rejects. Substituting a different event class when one is missing would
+// let a click test silently exercise MouseEvent and pass while PointerEvent support was broken, so
+// each shim extends the real constructor and nothing else.
+const withJsdomView = <T extends new (type: string, init?: any) => Event>(Base: T) =>
+  class extends (Base as new (type: string, init?: any) => Event) {
+    constructor(type: string, init?: any) {
+      super(type, init && init.view === globalThis ? { ...init, view: dom.window } : init);
     }
-    super(type, init);
-  }
-};
+  };
 
-const OriginalMouseEvent = dom.window.MouseEvent || dom.window.Event;
-gThis.MouseEvent = class MouseEvent extends (OriginalMouseEvent as any) {
-  constructor(type: string, init?: any) {
-    if (init && init.view === globalThis) {
-      init.view = dom.window;
-    }
-    super(type, init);
-  }
-};
+gThis.PointerEvent = withJsdomView(dom.window.PointerEvent);
+gThis.MouseEvent = withJsdomView(dom.window.MouseEvent);
+gThis.InputEvent = dom.window.InputEvent;
 
-gThis.InputEvent = dom.window.InputEvent || dom.window.Event;
-
-// Now import the modules
-import { performAct } from "../../../extension/src/acting/act.ts";
+import { performAct, performBatchFill } from "../../../extension/src/acting/act.ts";
 import { selectVerdict } from "../../../extension/src/acting/diff.ts";
 import {
   dispatchClick,
@@ -78,6 +69,22 @@ import {
   fillValue,
 } from "../../../extension/src/acting/input.ts";
 import { rememberSnapshot, resolveRef } from "../../../extension/src/acting/resolve.ts";
+// Now import the modules
+import { idFor, resetIdentity } from "../../../extension/src/perception/identity.ts";
+import { buildSnapshot } from "../../../extension/src/perception/snapshot.ts";
+
+/**
+ * Give the named elements the ids the test expects. Numbering is owned by the page-wide registry
+ * now, so a test asks for `#1` by being the first element registered rather than by writing into a
+ * map, which is also what proves the ids a real read hands out are the ones an action resolves.
+ */
+function seedRefs(wanted: Record<number, Element>): void {
+  resetIdentity();
+  const highest = Math.max(...Object.keys(wanted).map(Number));
+  for (let id = 1; id <= highest; id++) {
+    idFor(wanted[id] ?? document.createElement("span"));
+  }
+}
 
 if (!HTMLElement.prototype.scrollIntoView) {
   HTMLElement.prototype.scrollIntoView = () => {};
@@ -152,23 +159,20 @@ test("reference fallback descends into same-origin frame documents", () => {
   button.textContent = "Frame action";
   button.getBoundingClientRect = () => ({ width: 100, height: 30 }) as DOMRect;
   frameDocument.body.appendChild(button);
-  rememberSnapshot(
-    [
-      {
-        id: 91,
+  rememberSnapshot([
+    {
+      id: 91,
+      role: "button",
+      name: "Frame action",
+      recipe: {
         role: "button",
         name: "Frame action",
-        recipe: {
-          role: "button",
-          name: "Frame action",
-          dataAttrs: {},
-          text: "Frame action",
-          ordinal: 0,
-        },
+        dataAttrs: {},
+        text: "Frame action",
+        ordinal: 0,
       },
-    ],
-    new Map(),
-  );
+    },
+  ]);
 
   const resolution = resolveRef("91");
   assert.ok("el" in resolution);
@@ -403,7 +407,8 @@ test("loadMore processes scroll down and handles outcomes", async () => {
 test("performAct executes various cases and validation paths", async () => {
   const btn = document.createElement("button");
   document.body.appendChild(btn);
-  rememberSnapshot([], new Map([[1, btn]]));
+  seedRefs({ 1: btn });
+  rememberSnapshot([]);
 
   // click action
   const resClick = await performAct("1", "click");
@@ -415,7 +420,8 @@ test("performAct executes various cases and validation paths", async () => {
   assert.match(resClick.sentinel?.hint ?? "", /browser_tabs/);
 
   // fill text action on a button (non-fillable element)
-  rememberSnapshot([], new Map([[1, btn]]));
+  seedRefs({ 1: btn });
+  rememberSnapshot([]);
   const resFillButton = await performAct("1", "fill", "text");
   assert.strictEqual(resFillButton.verdict, "no_change");
   assert.strictEqual(resFillButton.sentinel?.kind, "not_actionable");
@@ -425,7 +431,8 @@ test("performAct executes various cases and validation paths", async () => {
   const input = document.createElement("input");
   input.type = "text";
   document.body.appendChild(input);
-  rememberSnapshot([], new Map([[2, input]]));
+  seedRefs({ 2: input });
+  rememberSnapshot([]);
   const _resFillInput = await performAct("2", "fill", "val");
   assert.strictEqual(input.value, "val");
 
@@ -434,12 +441,14 @@ test("performAct executes various cases and validation paths", async () => {
   btn.scrollIntoView = () => {
     scrollCalled = true;
   };
-  rememberSnapshot([], new Map([[1, btn]]));
+  seedRefs({ 1: btn });
+  rememberSnapshot([]);
   await performAct("1", "scroll");
   assert.strictEqual(scrollCalled, true);
 
   // navigate action
-  rememberSnapshot([], new Map([[1, btn]]));
+  seedRefs({ 1: btn });
+  rememberSnapshot([]);
   const resNav = await performAct("1", "navigate");
   assert.ok(resNav);
 
@@ -460,7 +469,8 @@ test("performAct with a select element calls fillSelect through tryPerformFill",
   select.appendChild(opt);
   document.body.appendChild(select);
 
-  rememberSnapshot([], new Map([[1, select]]));
+  seedRefs({ 1: select });
+  rememberSnapshot([]);
   const res = await performAct("1", "fill", "v1");
   assert.strictEqual(select.value, "v1");
   assert.strictEqual(res.verdict, "value_set");
@@ -479,7 +489,8 @@ test("performAct with a contenteditable element calls fillEditable through tryPe
   });
   document.body.appendChild(div);
 
-  rememberSnapshot([], new Map([[1, div]]));
+  seedRefs({ 1: div });
+  rememberSnapshot([]);
   const res = await performAct("1", "fill", "helloeditable");
   assert.strictEqual(div.textContent, "helloeditable");
   assert.strictEqual(res.verdict, "value_set");
@@ -492,7 +503,8 @@ test("fill without a value leaves the page unchanged", async () => {
   input.type = "text";
   document.body.appendChild(input);
 
-  rememberSnapshot([], new Map([[1, input]]));
+  seedRefs({ 1: input });
+  rememberSnapshot([]);
   const res = await performAct("1", "fill", undefined);
   assert.strictEqual(res.verdict, "no_change");
 
@@ -601,4 +613,79 @@ test("Enter submits the owning form, and a page that cancels the key stops it", 
   // Enter in a textarea is a newline, never a submit.
   dispatchEnter(d.getElementById("t") as HTMLTextAreaElement);
   assert.deepStrictEqual(submitted, ["f"], "a textarea never submits");
+});
+
+test("a javascript: link gets the click event but not the blocked navigation", () => {
+  const dom = new JSDOM(
+    `<a id="js" href="javascript:void(0)">go</a>
+     <a id="real" href="/somewhere">go</a>
+     <button id="btn">go</button>`,
+  );
+  const d = dom.window.document;
+  const activated: string[] = [];
+  const clicked: string[] = [];
+
+  for (const id of ["js", "real", "btn"]) {
+    const el = d.getElementById(id) as HTMLElement;
+    el.click = () => {
+      activated.push(id);
+    };
+    el.addEventListener("click", () => {
+      clicked.push(id);
+    });
+  }
+
+  dispatchClick(d.getElementById("js") as HTMLElement);
+  assert.deepStrictEqual(clicked, ["js"], "the click event still reaches the page");
+  assert.deepStrictEqual(activated, [], "the CSP-blocked activation is not attempted");
+
+  // A real destination and a plain button keep their native activation.
+  dispatchClick(d.getElementById("real") as HTMLElement);
+  dispatchClick(d.getElementById("btn") as HTMLElement);
+  assert.deepStrictEqual(activated, ["real", "btn"], "normal elements still activate natively");
+});
+
+test("a batch fill fills every field in one pass and settles once", async () => {
+  const d = gThis.document as Document;
+  d.body.innerHTML = `
+    <form>
+      <input id="name" type="text">
+      <input id="email" type="text">
+      <textarea id="cover"></textarea>
+    </form>`;
+
+  const snap = buildSnapshot(d);
+  rememberSnapshot(snap.refs, snap.markdown, snap.signature);
+  const refFor = (name: string) =>
+    String(snap.refs.find((r) => r.name === name || r.recipe?.name === name)?.id ?? "");
+
+  const ids = snap.refs.map((r) => String(r.id));
+  const result = await performBatchFill([
+    { ref: ids[0] as string, value: "Ada" },
+    { ref: ids[1] as string, value: "ada@example.com" },
+    { ref: ids[2] as string, value: "Hello" },
+  ]);
+
+  void refFor;
+  assert.strictEqual((d.getElementById("name") as HTMLInputElement).value, "Ada");
+  assert.strictEqual((d.getElementById("email") as HTMLInputElement).value, "ada@example.com");
+  assert.strictEqual((d.getElementById("cover") as HTMLTextAreaElement).value, "Hello");
+  assert.strictEqual(result.sentinel, undefined, "every field filled, so no sentinel");
+});
+
+test("a batch fill reports the fields it could not fill without abandoning the rest", async () => {
+  const d = gThis.document as Document;
+  d.body.innerHTML = `<form><input id="only" type="text"></form>`;
+  const snap = buildSnapshot(d);
+  rememberSnapshot(snap.refs, snap.markdown, snap.signature);
+
+  const result = await performBatchFill([
+    { ref: String(snap.refs[0]?.id), value: "kept" },
+    { ref: "9999", value: "no such control" },
+  ]);
+
+  assert.strictEqual((d.getElementById("only") as HTMLInputElement).value, "kept");
+  assert.ok(result.sentinel, "the caller is told something was missed");
+  assert.match(result.sentinel?.hint ?? "", /filled 1 of 2/);
+  assert.match(result.sentinel?.hint ?? "", /#9999/);
 });

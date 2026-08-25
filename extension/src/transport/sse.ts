@@ -1,3 +1,10 @@
+/**
+ * The extension's end of the bridge: authenticate, then hold an event stream open.
+ *
+ * Commands arrive as SSE frames and are handed to `onMessage` one at a time. The returned
+ * `AbortController` is how the caller closes the stream; `onDisconnect` fires exactly once when it
+ * ends, however it ends, so connection state is never left claiming a stream that has gone.
+ */
 export async function connectSse(
   token: string,
   safeHost: string,
@@ -37,6 +44,9 @@ export async function connectSse(
   });
 
   if (!sseRes.ok || !sseRes.body) {
+    // The request is already open at this point. Abandoning the controller without aborting leaves
+    // it that way, holding a socket the caller has no handle on and will never close.
+    controller.abort();
     return null;
   }
 

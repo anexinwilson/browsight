@@ -4,59 +4,23 @@
  * delegated to the content script. A navigation that tears down the content script mid-act is
  * reported as a clean `navigated` verdict rather than a raw channel-closed error.
  */
-import type { ActRequest, Diff, Ref, Sentinel, SentinelKind, Verdict } from "@browsight/shared";
+import type { ActRequest } from "@browsight/shared";
 import { decideAccess, type Grant } from "../permissions/policy.ts";
 import { listGrants, touchGrant } from "../permissions/storage.ts";
 import { currentTab, originOf, type Send } from "./common.ts";
-
-interface ActContentResult {
-  readonly verdict: Verdict;
-  readonly diff: Diff;
-  readonly refs: Ref[];
-  readonly sentinel?: Sentinel;
-}
+import type { ContentActResult } from "./content-protocol.ts";
+import { ActionTimeoutError, withDeadline } from "./deadline.ts";
+import { handleNavigate, waitForExistingNavigation } from "./navigation.ts";
+import { sendActSentinel } from "./sentinels.ts";
 
 const SCRIPT_INJECTION_TIMEOUT_MS = 3_000;
 const CONTENT_ACTION_TIMEOUT_MS = 15_000;
-const NAVIGATION_TIMEOUT_MS = 8_000;
 
-export class ActionTimeoutError extends Error {
-  readonly stage: string;
-  readonly timeoutMs: number;
-
-  constructor(stage: string, timeoutMs: number) {
-    super(`${stage} timed out after ${timeoutMs} ms`);
-    this.name = "ActionTimeoutError";
-    this.stage = stage;
-    this.timeoutMs = timeoutMs;
-  }
-}
-
-export async function withDeadline<T>(
-  promise: Promise<T>,
-  stage: string,
-  timeoutMs: number,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new ActionTimeoutError(stage, timeoutMs)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-  }
-}
-
-function isActContentResult(value: unknown): value is ActContentResult {
+function isContentActResult(value: unknown): value is ContentActResult {
   if (!value || typeof value !== "object") {
     return false;
   }
-  const result = value as Partial<ActContentResult>;
+  const result = value as Partial<ContentActResult>;
   return (
     typeof result.verdict === "string" &&
     typeof result.diff === "object" &&
@@ -64,12 +28,13 @@ function isActContentResult(value: unknown): value is ActContentResult {
   );
 }
 
-async function sendContentAct(tabId: number, msg: ActRequest): Promise<ActContentResult> {
+async function sendContentAct(tabId: number, msg: ActRequest): Promise<ContentActResult> {
   const actionMessage = {
     kind: "act",
     ref: msg.ref,
     action: msg.action,
     value: msg.value,
+    ...(msg.fields ? { fields: msg.fields } : {}),
   };
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) {
@@ -95,118 +60,11 @@ async function sendContentAct(tabId: number, msg: ActRequest): Promise<ActConten
       }
       throw error;
     }
-    if (isActContentResult(result)) {
+    if (isContentActResult(result)) {
       return result;
     }
   }
   throw new Error("the page content script did not return an action result");
-}
-
-function tabIsReady(tab: chrome.tabs.Tab | undefined): tab is chrome.tabs.Tab {
-  return Boolean(tab && tab.status !== "loading");
-}
-
-async function waitForTabReady(
-  tabId: number,
-  start: () => Promise<chrome.tabs.Tab | undefined>,
-): Promise<chrome.tabs.Tab> {
-  const onUpdated = chrome.tabs.onUpdated;
-  if (!onUpdated?.addListener || !onUpdated.removeListener) {
-    await start();
-    return chrome.tabs.get(tabId);
-  }
-
-  return withDeadline(
-    new Promise<chrome.tabs.Tab>((resolve, reject) => {
-      const finish = (tab: chrome.tabs.Tab): void => {
-        onUpdated.removeListener(listener);
-        resolve(tab);
-      };
-      const listener = (
-        updatedTabId: number,
-        changeInfo: chrome.tabs.OnUpdatedInfo,
-        tab: chrome.tabs.Tab,
-      ): void => {
-        if (updatedTabId === tabId && (changeInfo.status === "complete" || tabIsReady(tab))) {
-          finish(tab);
-        }
-      };
-      onUpdated.addListener(listener);
-      start()
-        .then(async (tab) => {
-          const observed = tab ?? (await chrome.tabs.get(tabId));
-          if (tabIsReady(observed)) {
-            finish(observed);
-          }
-        })
-        .catch((error: unknown) => {
-          onUpdated.removeListener(listener);
-          reject(error);
-        });
-    }),
-    "navigation",
-    NAVIGATION_TIMEOUT_MS,
-  );
-}
-
-async function waitForExistingNavigation(tabId: number): Promise<chrome.tabs.Tab> {
-  return waitForTabReady(tabId, () => chrome.tabs.get(tabId));
-}
-
-async function handleNavigate(
-  send: Send,
-  id: string,
-  value: string | undefined,
-  tabId: number,
-  grants: Grant[],
-  now: number,
-): Promise<void> {
-  if (value === "reload" || value === "refresh") {
-    await waitForTabReady(tabId, async () => {
-      await chrome.tabs.reload(tabId);
-      return undefined;
-    });
-    send({
-      type: "act.response",
-      id,
-      verdict: "navigated",
-      diff: { appeared: [], removed: [], changed: [] },
-      refs: [],
-    });
-    return;
-  }
-  if (!value) {
-    sendActSentinel(send, id, "not_actionable", "navigate needs a url value (or 'reload')");
-    return;
-  }
-  const target = originOf(value);
-  if (!decideAccess(grants, target, now).act) {
-    sendActSentinel(
-      send,
-      id,
-      "not_whitelisted",
-      `${target} is not set to "Full control", navigating there is an action and needs full-control access in the browsight popup.`,
-    );
-    return;
-  }
-  const destination = await waitForTabReady(tabId, () => chrome.tabs.update(tabId, { url: value }));
-  const destinationOrigin = destination.url ? originOf(destination.url) : target;
-  if (!decideAccess(grants, destinationOrigin, Date.now()).read) {
-    sendActSentinel(
-      send,
-      id,
-      "not_whitelisted",
-      `the page navigated to ${destinationOrigin}, which is not whitelisted, allow it in the browsight popup to continue.`,
-    );
-    return;
-  }
-  send({
-    type: "act.response",
-    id,
-    verdict: "navigated",
-    diff: { appeared: [], removed: [], changed: [] },
-    refs: [],
-  });
 }
 
 interface ContentActFailureContext {
@@ -330,15 +188,4 @@ export async function handleAct(send: Send, msg: ActRequest): Promise<void> {
       error,
     );
   }
-}
-
-function sendActSentinel(send: Send, id: string, kind: SentinelKind, hint: string): void {
-  send({
-    type: "act.response",
-    id,
-    verdict: "no_change",
-    diff: { appeared: [], removed: [], changed: [] },
-    refs: [],
-    sentinel: { kind, hint },
-  });
 }

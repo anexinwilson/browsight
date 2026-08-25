@@ -71,9 +71,11 @@ beforeEach(() => {
   contentMessages.length = 0;
 });
 
+const DEFAULT_OPTIONS = { mode: "full", offset: 0, query: null } as const;
+
 async function read(): Promise<BridgeMessage> {
   const sent: BridgeMessage[] = [];
-  await handleRead((message) => sent.push(message), "read-1");
+  await handleRead((message) => sent.push(message), "read-1", DEFAULT_OPTIONS);
   assert.equal(sent.length, 1);
   return sent[0];
 }
@@ -106,7 +108,7 @@ test("read injects the content script and returns a semantic snapshot", async ()
   assert.equal(result.type, "read.response");
   assert.equal(result.type === "read.response" ? result.markdown : "", "Page body");
   assert.deepEqual(injected, [7]);
-  assert.deepEqual(contentMessages, [{ kind: "read", mode: "full" }]);
+  assert.deepEqual(contentMessages, [{ kind: "read", mode: "full", offset: 0, query: "" }]);
 });
 
 test("read forwards main mode to the content script", async () => {
@@ -114,10 +116,13 @@ test("read forwards main mode to the content script", async () => {
   grants = [{ origin: "https://allowed.example", tier: "read", expiresAt: null }];
   const sent: BridgeMessage[] = [];
 
-  await handleRead((message) => sent.push(message), "read-main", "main");
+  await handleRead((message) => sent.push(message), "read-main", {
+    ...DEFAULT_OPTIONS,
+    mode: "main",
+  });
 
   assert.equal(sent[0]?.type, "read.response");
-  assert.deepEqual(contentMessages, [{ kind: "read", mode: "main" }]);
+  assert.deepEqual(contentMessages, [{ kind: "read", mode: "main", offset: 0, query: "" }]);
 });
 
 test("read converts content-script failures into a typed response", async () => {

@@ -6,13 +6,26 @@
 import type { SentinelKind } from "@browsight/shared";
 import { decideAccess } from "../permissions/policy.ts";
 import { listGrants, touchGrant } from "../permissions/storage.ts";
-import { currentTab, originOf, readTabContent, type Send, setCurrentTab } from "./common.ts";
+import {
+  currentTab,
+  originOf,
+  type ReadOptions,
+  readTabContent,
+  type Send,
+  setCurrentTab,
+} from "./common.ts";
+import type { ContentReadResult } from "./content-protocol.ts";
 
-export async function handleRead(
-  send: Send,
-  id: string,
-  mode: "full" | "main" = "full",
-): Promise<void> {
+/** No page, in the shape a read response expects. */
+const EMPTY_READ: ContentReadResult = {
+  markdown: "",
+  refs: [],
+  hasPasswordField: false,
+  truncated: false,
+  nextOffset: 0,
+};
+
+export async function handleRead(send: Send, id: string, options: ReadOptions): Promise<void> {
   // Operate on the tab the agent is driving (set by the last read or tab-switch), falling back to the
   // focused tab only when none is recorded yet. This makes read/act consistent and immune to OS focus
   // being on another window entirely (e.g. the service-worker devtools).
@@ -34,26 +47,16 @@ export async function handleRead(
   }
   await touchGrant(origin);
   try {
-    const snap = await readTabContent(tab.id, mode);
-    send({
-      type: "read.response",
-      id,
-      markdown: snap.markdown,
-      refs: snap.refs,
-      hasPasswordField: snap.hasPasswordField,
-    });
+    const snap = await readTabContent(tab.id, options);
+    // The content script already answers in the response's shape, so restating the fields here only
+    // created a second place to forget one.
+    send({ type: "read.response", id, ...snap });
   } catch (err) {
     sendSentinel(send, id, "frame_unreachable", `could not read the page: ${String(err)}`);
   }
 }
 
+/** A read that could not happen, reported as an empty page carrying the reason. */
 function sendSentinel(send: Send, id: string, kind: SentinelKind, hint: string): void {
-  send({
-    type: "read.response",
-    id,
-    markdown: "",
-    refs: [],
-    hasPasswordField: false,
-    sentinel: { kind, hint },
-  });
+  send({ type: "read.response", id, ...EMPTY_READ, sentinel: { kind, hint } });
 }

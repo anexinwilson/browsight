@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1Bn2EcyM3M9HSFMgL1yQNhJEavDkfeOtuXy5Xh2mJ+f1cbQBWJCyXV9iUbfsAux8Hs1TWg/sH9Gg4zH5BZx8pytOMpQW71MyFgSCKUTmYHG0N17G4NFR+jeZVMSCCM96Dcv4ItQkLwRyqmKwr8G+XNdOZv+5Ft5sHCErnbjRhgsx11oIjMCYhQnPp5vEpWFFh2WtUCAlWpVKYHaQrNptvx3a7GCp5GQavhtVN7G+tUReA2gFBQs8UP8aQk0UuMrtcBz1y+9GqbdraWDAZs/b7baebKdHxFGFJLm4tYCtKjRsdGjQRuZno661FZ/IyKSsTv0dSu6CbQMuglE6y7wyJQIDAQAB",
   "name": "browsight",
-  "version": "0.1.5",
+  "version": "1.1.0",
   "description": "Read and act on your real, logged-in Chrome from an MCP client.",
   "minimum_chrome_version": "116",
   "permissions": ["scripting", "storage", "alarms", "tabs", "activeTab"],

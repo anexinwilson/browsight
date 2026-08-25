@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import test, { mock } from "node:test";
 import { JSDOM } from "jsdom";
+import type { PageTools } from "../../extension/src/content.ts";
 
 // 1. Setup JSDOM
 const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>");
@@ -47,15 +48,18 @@ const buildSnapshotMock = mock.fn((_doc: any) => {
   };
 });
 
-(globalThis as any).__mockPerformAct = performActMock;
-(globalThis as any).__mockRememberSnapshot = rememberSnapshotMock;
-(globalThis as any).__mockBuildSnapshot = buildSnapshotMock;
+// Injected explicitly rather than through globals, so the shipped extension carries no test hooks.
+const testTools = {
+  buildSnapshot: buildSnapshotMock,
+  rememberSnapshot: rememberSnapshotMock,
+  performAct: performActMock,
+} as unknown as PageTools;
 
 // Reset the global injection guard if it was somehow set
 (globalThis as any).__browsightInjected = undefined;
 
 // 5. Import the content script
-await import("../../extension/src/content.ts");
+const { handleContentMessage } = await import("../../extension/src/content.ts");
 
 test("content.ts double-injection guard", async () => {
   // Verify __browsightInjected is set to true
@@ -67,14 +71,14 @@ test("content.ts double-injection guard", async () => {
 });
 
 test("content.ts handles 'read' message", () => {
-  const listener = listeners[0];
+  const _listener = listeners[0];
   let response: any = null;
   const sendResponse = (res: any) => {
     response = res;
   };
 
   // Triggers listener for "read"
-  const result = listener({ kind: "read" }, {}, sendResponse);
+  const result = handleContentMessage({ kind: "read" }, sendResponse, testTools);
 
   assert.strictEqual(result, false, "'read' message should return false");
   assert.ok(buildSnapshotMock.mock.calls.length > 0);
@@ -88,17 +92,17 @@ test("content.ts handles 'read' message", () => {
 });
 
 test("content.ts handles 'act' message", async () => {
-  const listener = listeners[0];
+  const _listener = listeners[0];
   let response: any = null;
   const sendResponse = (res: any) => {
     response = res;
   };
 
   // Triggers listener for "act"
-  const result = listener(
+  const result = handleContentMessage(
     { kind: "act", ref: "btn-1", action: "click", value: "val-1" },
-    {},
     sendResponse,
+    testTools,
   );
 
   assert.strictEqual(result, true, "'act' message should return true");
@@ -112,15 +116,15 @@ test("content.ts handles 'act' message", async () => {
 });
 
 test("content.ts accepts viewport scroll with an empty element reference", async () => {
-  const listener = listeners[0];
+  const _listener = listeners[0];
   let response: any = null;
   const before = performActMock.mock.calls.length;
-  const result = listener(
+  const result = handleContentMessage(
     { kind: "act", ref: "", action: "scroll", value: "down" },
-    {},
     (res: any) => {
       response = res;
     },
+    testTools,
   );
 
   assert.strictEqual(result, true);
@@ -130,14 +134,18 @@ test("content.ts accepts viewport scroll with an empty element reference", async
 });
 
 test("content.ts converts rejected page actions into a typed failure", async () => {
-  const listener = listeners[0];
+  const _listener = listeners[0];
   let response: any = null;
   performActMock.mock.mockImplementationOnce(async () => {
     throw new Error("frame disappeared");
   });
-  const result = listener({ kind: "act", ref: "btn-2", action: "click" }, {}, (res: any) => {
-    response = res;
-  });
+  const result = handleContentMessage(
+    { kind: "act", ref: "btn-2", action: "click" },
+    (res: any) => {
+      response = res;
+    },
+    testTools,
+  );
 
   assert.strictEqual(result, true);
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -147,19 +155,25 @@ test("content.ts converts rejected page actions into a typed failure", async () 
 });
 
 test("content.ts ignores unknown or incomplete messages", () => {
-  const listener = listeners[0];
+  const _listener = listeners[0];
   let response: any = null;
   const sendResponse = (res: any) => {
     response = res;
   };
 
   // Unknown message kind
-  const res1 = listener({ kind: "unknown" }, {}, sendResponse);
+  // Cast deliberately: messages arrive over chrome.runtime from another context, so the handler
+  // must stay safe against a kind the type system says cannot happen.
+  const res1 = handleContentMessage(
+    { kind: "unknown" } as unknown as Parameters<typeof handleContentMessage>[0],
+    sendResponse,
+    testTools,
+  );
   assert.strictEqual(res1, false);
   assert.strictEqual(response, null);
 
   // Incomplete 'act' message (missing action/ref)
-  const res2 = listener({ kind: "act", ref: "btn-1" }, {}, sendResponse);
+  const res2 = handleContentMessage({ kind: "act", ref: "btn-1" }, sendResponse, testTools);
   assert.strictEqual(res2, false);
   assert.strictEqual(response, null);
 });

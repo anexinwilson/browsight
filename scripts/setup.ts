@@ -1,214 +1,147 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 /**
- * `browsight setup`, the one-command bootstrap.
+ * The browsight CLI: `setup`, `start`, `stop`, `doctor` and `serve`.
  *
- * Generates a token and a free loopback port, then shares them with both sides so the extension
- * auto-connects with no copy-paste: the server reads ~/.browsight/bridge.json, and the extension
- * reads extension/dist/connection.json (written into its own package). It also registers the MCP
- * server in the client config and prints the one manual step. `setup doctor` walks the chain and
- * reports the first broken link.
- *
- * Paths are rooted at $BROWSIGHT_HOME (defaults to the home directory) so the flow is testable.
+ * Setup is the only command that writes: it picks a port, writes the shared bridge config, installs
+ * the extension where Chrome can load it, and registers browsight with whichever MCP clients are
+ * present. The pieces it composes live alongside it, in `clients.ts`, `paths.ts` and
+ * `extension-install.ts`, so this file stays the sequence rather than the mechanics.
  */
-import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from "node:fs";
-import { createServer } from "node:net";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
+import { liveServerPids } from "../server/src/lifecycle/pidfile.ts";
+import {
+  type ClientId,
+  clientConfigPaths,
+  codexConfigPath,
+  detectedClients,
+  generateToken,
+  type McpEntry,
+  mcpNpxEntry,
+  mcpServerEntry,
+  parseClientFilter,
+  withBrowsightCodex,
+  withBrowsightServer,
+  withoutBrowsightCodex,
+  withoutBrowsightServer,
+} from "./clients.ts";
+import { installExtension, installedExtensionIsStale } from "./extension-install.ts";
+import { output } from "./output.ts";
+import {
+  bridgeConfigPath,
+  EXTENSION_DIST_SRC,
+  extensionHome,
+  isNpxContext,
+  pickPort,
+  readJson,
+  SERVER_ENTRY,
+  writeJson,
+  writeSecretJson,
+} from "./paths.ts";
 
-export interface McpEntry {
-  readonly command: string;
-  readonly args: string[];
-}
-
-/** Generate a high-entropy per-install token. */
-export function generateToken(): string {
-  return randomBytes(32).toString("base64url");
-}
-
-/** The MCP server entry that points the client at the built server. */
-export function mcpServerEntry(serverEntryPath: string): McpEntry {
-  return { command: process.execPath, args: [serverEntryPath] };
-}
-
-/** The MCP entry to write when running via npx, always re-fetches from the registry so the
- *  server is never tied to a temp cache path. */
-export function mcpNpxEntry(): McpEntry {
-  return { command: "npx", args: ["-y", "browsight", "serve"] };
-}
-
-/** Merge the browsight entry into a client config object without disturbing other servers. */
-export function withBrowsightServer(
-  config: Record<string, unknown>,
+function registerClients(
   entry: McpEntry,
-): Record<string, unknown> {
-  const existing = (config.mcpServers as Record<string, unknown> | undefined) ?? {};
-  return { ...config, mcpServers: { ...existing, browsight: entry } };
-}
+  only: ClientId[] | null,
+): { registered: ClientId[]; skipped: ClientId[] } {
+  const registered: ClientId[] = [];
+  const skipped: ClientId[] = [];
+  const wanted = (id: ClientId) => !only || only.includes(id);
 
-const BACKSLASH_ESCAPED = String.raw`\\`;
-const QUOTE_ESCAPED = String.raw`\"`;
-
-/** Render a string as a TOML value. Literal (single-quoted) strings need no escaping, which keeps
- *  Windows paths like C:\Users\... intact; fall back to a basic string only if a quote appears. */
-function tomlString(value: string): string {
-  return value.includes("'")
-    ? `"${value.replaceAll("\\", BACKSLASH_ESCAPED).replaceAll('"', QUOTE_ESCAPED)}"`
-    : `'${value}'`;
-}
-
-/** The Codex `[mcp_servers.browsight]` table for the given entry. */
-export function browsightCodexBlock(entry: McpEntry): string {
-  const args = entry.args.map(tomlString).join(", ");
-  return `[mcp_servers.browsight]\ncommand = ${tomlString(entry.command)}\nargs = [${args}]\n`;
-}
-
-/** Merge the browsight table into an existing config.toml (Codex's format), replacing a previous
- *  [mcp_servers.browsight] table in place and otherwise appending, so every other setting and MCP
- *  server in the file is preserved untouched. */
-export function withBrowsightCodex(existing: string, entry: McpEntry): string {
-  const block = browsightCodexBlock(entry);
-  const header = /^\[mcp_servers\.browsight\][^\n]*$/m.exec(existing);
-  if (header?.index === undefined) {
-    const base = existing.trim();
-    return base ? `${base}\n\n${block}` : block;
-  }
-  const after = existing.slice(header.index + header[0].length);
-  const nextTable = after.search(/^[ \t]*\[/m);
-  const tail = nextTable === -1 ? "" : after.slice(nextTable);
-  const tailStr = tail ? `\n${tail}` : "";
-  return `${existing.slice(0, header.index)}${block}${tailStr}`;
-}
-
-const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-// When running source directly (node scripts/setup.ts): SCRIPT_DIR ends in /scripts
-// When compiled by tsdown (scripts/dist/setup.mjs):     SCRIPT_DIR ends in /scripts/dist
-// Detect which so PKG_ROOT always resolves to the package root correctly.
-const isCompiled = /[/\\]dist$/.test(SCRIPT_DIR);
-const PKG_ROOT = isCompiled ? resolve(SCRIPT_DIR, "..", "..") : resolve(SCRIPT_DIR, "..");
-
-const SERVER_ENTRY = join(PKG_ROOT, "server", "dist", "index.mjs");
-const EXTENSION_DIST_SRC = join(PKG_ROOT, "extension", "dist");
-
-function home(): string {
-  return process.env.BROWSIGHT_HOME ?? homedir();
-}
-
-/** True when running via `npx browsight`, the package is installed into the npm cache (_npx
- *  directory), not a permanent location, so we must copy the extension to ~/.browsight and use
- *  the npx command form in client configs rather than an absolute path to the cache. */
-function isNpxContext(): boolean {
-  // npx installs packages under a path containing _npx. A local repo clone never has this.
-  const p = SCRIPT_DIR.replaceAll("\\", "/");
-  return p.includes("/_npx/") || p.includes("/.cache/node/");
-}
-
-/** Permanent home for the extension on the user's machine. */
-function extensionHome(): string {
-  return join(home(), ".browsight", "extension");
-}
-
-function bridgeConfigPath(): string {
-  return join(home(), ".browsight", "bridge.json");
-}
-
-/** JSON-config MCP clients to register browsight in. Claude Code is always set up; the others only
- *  if the client looks installed (its home folder exists), so setup never creates configs for apps
- *  that aren't there. Each entry is [id, configFile, installMarker]; Antigravity shares one config
- *  across its IDE/CLI at ~/.gemini/config/mcp_config.json. Codex is handled separately (it is TOML). */
-function clientConfigPaths(): string[] {
-  const h = home();
-  const candidates: ReadonlyArray<readonly [string, string, string]> = [
-    ["claude", join(h, ".claude.json"), join(h, ".claude")],
-    ["cursor", join(h, ".cursor", "mcp.json"), join(h, ".cursor")],
-    ["windsurf", join(h, ".codeium", "windsurf", "mcp_config.json"), join(h, ".codeium")],
-    ["antigravity", join(h, ".gemini", "config", "mcp_config.json"), join(h, ".gemini")],
-  ];
-  return candidates
-    .filter(([, p, marker]) => existsSync(p) || existsSync(marker))
-    .map(([, p]) => p);
-}
-
-function codexConfigPath(): string {
-  return join(home(), ".codex", "config.toml");
-}
-
-export function tryPort(port: number): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.once("error", reject);
-    srv.once("listening", () => {
-      const addr = srv.address();
-      const chosen = typeof addr === "object" && addr ? addr.port : port;
-      srv.close(() => resolve(chosen));
-    });
-    srv.listen(port, "127.0.0.1");
-  });
-}
-
-export async function pickPort(preferred: number): Promise<number> {
-  try {
-    return await tryPort(preferred);
-  } catch {
-    try {
-      return await tryPort(0);
-    } catch {
-      return preferred;
+  for (const [id, path] of detectedClients()) {
+    if (wanted(id)) {
+      writeJson(path, withBrowsightServer(readJson(path), entry));
+      registered.push(id);
+    } else {
+      skipped.push(id);
     }
   }
-}
 
-function writeJson(path: string, data: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
+  // Codex uses TOML, not JSON. Merge into any existing config.toml so the user's other servers
+  // and settings survive.
+  const codexPath = codexConfigPath();
+  if (!existsSync(codexPath) && !existsSync(dirname(codexPath))) {
+    return { registered, skipped };
+  }
+  if (!wanted("codex")) {
+    skipped.push("codex");
+    return { registered, skipped };
+  }
+  const current = existsSync(codexPath) ? readFileSync(codexPath, "utf8") : "";
+  mkdirSync(dirname(codexPath), { recursive: true });
+  writeFileSync(codexPath, withBrowsightCodex(current, entry));
+  registered.push("codex");
+  return { registered, skipped };
 }
 
 /**
- * Writes a file that holds the bridge token, readable only by its owner.
- *
- * The token grants full control of the user's authenticated browser, and the
- * default file mode on macOS and Linux is world-readable, any other local account
- * could simply read it. The mode is applied explicitly as well as at creation,
- * because writeFileSync leaves the permissions of an existing file alone.
- * Windows ignores POSIX modes; there the user profile ACL already restricts access.
+ * Turn browsight off. Removes it from every MCP client config so nothing spawns it again, then
+ * terminates any server still running. It stays off until `browsight start`.
  */
-export function writeSecretJson(path: string, data: unknown): void {
-  const dir = dirname(path);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
-  if (process.platform !== "win32") {
-    chmodSync(path, 0o600);
-    try {
-      chmodSync(dir, 0o700);
-    } catch {
-      // The directory may be shared (an extension bundle); the file mode is what matters.
+export function runStop(): void {
+  const removed: ClientId[] = [];
+  for (const [id, path] of detectedClients()) {
+    const before = readJson(path);
+    const after = withoutBrowsightServer(before);
+    if (after !== before) {
+      writeJson(path, after);
+      removed.push(id);
     }
   }
+  const codexPath = codexConfigPath();
+  if (existsSync(codexPath)) {
+    const before = readFileSync(codexPath, "utf8");
+    const after = withoutBrowsightCodex(before);
+    if (after !== before) {
+      writeFileSync(codexPath, after);
+      removed.push("codex");
+    }
+  }
+
+  let stopped = 0;
+  for (const pid of liveServerPids()) {
+    try {
+      process.kill(pid);
+      stopped++;
+    } catch {
+      // Already gone between listing and killing; nothing to do.
+    }
+  }
+
+  output.write(
+    [
+      "[ok] browsight stopped.",
+      `     unregistered from: ${removed.length > 0 ? removed.join(", ") : "no clients"}`,
+      `     running servers stopped: ${stopped}`,
+      "",
+      "It stays off until you run `npx browsight start`.",
+      "",
+    ].join("\n"),
+  );
 }
 
-export function readJson(path: string): Record<string, unknown> {
-  if (!existsSync(path)) {
-    return {};
-  }
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
+/** Turn browsight back on by re-registering it with the selected MCP clients. */
+export async function runStart(clients: ClientId[] | null): Promise<void> {
+  const npx = isNpxContext();
+  const entry = npx ? mcpNpxEntry() : mcpServerEntry(SERVER_ENTRY);
+  const { registered } = registerClients(entry, clients);
+  output.write(
+    [
+      registered.length > 0
+        ? `[ok] browsight started, registered with: ${registered.join(", ")}`
+        : "[!] no MCP client found, so browsight was not registered anywhere.",
+      "",
+      "Restart your MCP client so it picks this up.",
+      "",
+    ].join("\n"),
+  );
 }
 
-export async function runSetup(options: { readonly newPort?: boolean } = {}): Promise<void> {
+export async function runSetup(
+  options: { readonly newPort?: boolean; readonly clients?: ClientId[] | null } = {},
+): Promise<void> {
   const npx = isNpxContext();
 
   // Reuse the existing token + port if setup has run before, so re-running never moves the port out
@@ -230,97 +163,125 @@ export async function runSetup(options: { readonly newPort?: boolean } = {}): Pr
   // Always copy the bundled extension to a permanent ~/.browsight/extension/ folder
   // so Chrome can load it from a single stable path.
   const extensionDistPath = extensionHome();
-  // Chrome keeps running the copy it loaded, so a re-run needs a reload rather than a fresh load.
-  const alreadyLoaded = existsSync(join(extensionDistPath, "manifest.json"));
-  mkdirSync(extensionDistPath, { recursive: true });
-  if (existsSync(EXTENSION_DIST_SRC)) {
-    cpSync(EXTENSION_DIST_SRC, extensionDistPath, { recursive: true });
-  }
+  installExtension();
 
   writeSecretJson(join(extensionDistPath, "connection.json"), { host, port, token });
 
   // Write the correct MCP entry for this context.
   const entry = npx ? mcpNpxEntry() : mcpServerEntry(SERVER_ENTRY);
 
-  for (const path of clientConfigPaths()) {
-    writeJson(path, withBrowsightServer(readJson(path), entry));
-  }
-  // Codex uses TOML, not JSON, register it only if it looks installed, merging into any existing
-  // config.toml so the user's other servers and settings are preserved.
-  const codexPath = codexConfigPath();
-  if (existsSync(codexPath) || existsSync(dirname(codexPath))) {
-    const current = existsSync(codexPath) ? readFileSync(codexPath, "utf8") : "";
-    mkdirSync(dirname(codexPath), { recursive: true });
-    writeFileSync(codexPath, withBrowsightCodex(current, entry));
-  }
+  const only = options.clients ?? null;
+  const { registered, skipped } = registerClients(entry, only);
 
   const lines = [
-    "[ok] browsight is configured.",
+    // Registering nothing is not success: without a client entry no agent can reach browsight.
+    registered.length > 0
+      ? `[ok] browsight registered with: ${registered.join(", ")}`
+      : "[!] no MCP client found, so browsight was not registered anywhere. Install one (Claude Code, Cursor, Windsurf, Antigravity, Codex) and run setup again.",
+    ...(skipped.length > 0 ? [`    also installed, not registered: ${skipped.join(", ")}`] : []),
     "",
-    ...(alreadyLoaded
-      ? [
-          "Reload the extension so Chrome picks up this copy:",
-          "  1. Chrome menu > Extensions > Manage extensions",
-          "  2. click the reload icon on the Browsight card",
-        ]
-      : [
-          "Load the extension into Chrome:",
-          "  1. Chrome menu > Extensions > Manage extensions",
-          "  2. enable Developer mode (top-right)",
-          `  3. click "Load unpacked" and select:  ${extensionDistPath}`,
-        ]),
+    // The path is always printed. It used to be shown only on a first install, decided by whether
+    // the folder existed, which stays true after the extension is removed from Chrome: anyone in
+    // that state was told to reload a card that was not there, and never given the path.
+    "Next, in Chrome: menu > Extensions > Manage extensions > Load unpacked",
+    "",
+    `  ${extensionDistPath}`,
     "",
     "Then restart your MCP client so it picks up the new configuration.",
-    "Check the connection any time with `npx browsight doctor`.",
+    "",
+    // Without this, `start` and `stop` are only discoverable by running `browsight help`, so the
+    // control the user most often wants (turning it off, and having it stay off) stays hidden.
+    "Everyday commands:",
+    "  npx browsight stop      turn browsight off, it stays off until you start it again",
+    "  npx browsight start     turn it back on",
+    "  npx browsight doctor    check the installation and the connection",
   ];
-  process.stdout.write(`${lines.join("\n")}\n`);
+  output.write(`${lines.join("\n")}\n`);
 }
 
-export function runDoctor(): void {
+/** One link in the chain, and the command that repairs it. */
+interface DoctorCheck {
+  readonly label: string;
+  readonly ok: boolean;
+  readonly fix?: string;
+}
+
+/** Repairs every link, so it is the right answer unless a check knows a narrower one. */
+const DEFAULT_FIX = "npx browsight setup";
+
+/**
+ * Where doctor looks. Defaults to the real build output; injectable because the test suite runs
+ * before `npm run build`, so a check reaching for real build output would fail on a fresh checkout.
+ */
+export interface DoctorPaths {
+  readonly serverEntry?: string;
+  readonly extensionDist?: string;
+}
+
+export function runDoctor(paths: DoctorPaths = {}): void {
+  const serverEntry = paths.serverEntry ?? SERVER_ENTRY;
+  const extensionDist = paths.extensionDist ?? EXTENSION_DIST_SRC;
   const codexPath = codexConfigPath();
   const codexRegistered =
     existsSync(codexPath) && /^\[mcp_servers\.browsight\]/m.test(readFileSync(codexPath, "utf8"));
   const registered =
     codexRegistered ||
     clientConfigPaths().some(
-      (p) => "browsight" in ((readJson(p).mcpServers as Record<string, unknown> | undefined) ?? {}),
+      (path: string) =>
+        "browsight" in ((readJson(path).mcpServers as Record<string, unknown> | undefined) ?? {}),
     );
-  const checks: ReadonlyArray<readonly [string, boolean]> = [
-    ["server built (server/dist/index.mjs)", existsSync(SERVER_ENTRY)],
-    [
-      "extension built (extension/dist/manifest.json)",
-      existsSync(join(EXTENSION_DIST_SRC, "manifest.json")) ||
+  const checks: readonly DoctorCheck[] = [
+    { label: "server built (server/dist/index.mjs)", ok: existsSync(serverEntry) },
+    {
+      label: "extension built (extension/dist/manifest.json)",
+      ok:
+        existsSync(join(extensionDist, "manifest.json")) ||
         existsSync(join(extensionHome(), "manifest.json")),
-    ],
-    ["bridge config written (~/.browsight/bridge.json)", existsSync(bridgeConfigPath())],
-    [
-      "extension connection.json written",
-      existsSync(join(EXTENSION_DIST_SRC, "connection.json")) ||
+    },
+    {
+      // The failure that looks like nothing is wrong: the folder is there and the extension
+      // reloads, but it keeps running old code because the build never reached the install.
+      label: "installed extension matches the build",
+      ok: !installedExtensionIsStale(extensionDist),
+      fix: "npx browsight setup",
+    },
+    {
+      label: "bridge config written (~/.browsight/bridge.json)",
+      ok: existsSync(bridgeConfigPath()),
+    },
+    {
+      label: "extension connection.json written",
+      ok:
+        existsSync(join(extensionDist, "connection.json")) ||
         existsSync(join(extensionHome(), "connection.json")),
-    ],
-    ["MCP server registered in a client config", registered],
+    },
+    {
+      label: "MCP server registered in a client config",
+      ok: registered,
+      // The usual reason this link is missing is that the user ran `stop`, which promises browsight
+      // stays off until `start`. Sending them to `setup` would contradict what stop just told them.
+      fix: "npx browsight start",
+    },
   ];
-  for (const [label, ok] of checks) {
-    process.stdout.write(`${ok ? "[ok]" : "[missing]"} ${label}\n`);
+  for (const check of checks) {
+    output.write(`${check.ok ? "[ok]" : "[missing]"} ${check.label}\n`);
   }
-  const firstBroken = checks.find(([, ok]) => !ok);
-  process.stdout.write(
+  const firstBroken = checks.find((check) => !check.ok);
+  output.write(
     firstBroken
-      ? `\nNext: fix "${firstBroken[0]}", run \`npx browsight setup\`.\n`
+      ? `\nNext: fix "${firstBroken.label}", run \`${firstBroken.fix ?? DEFAULT_FIX}\`.\n`
       : "\nAll links connected. If a read still fails, whitelist the site in the browsight popup.\n",
   );
 }
 
 export function runServe(args: readonly string[] = []): number {
   if (!existsSync(SERVER_ENTRY)) {
-    process.stderr.write(
-      "browsight server is not built; reinstall the package or run `npm run build`\n",
-    );
+    output.error("browsight server is not built; reinstall the package or run `npm run build`\n");
     return 1;
   }
   const child = spawnSync(process.execPath, [SERVER_ENTRY, ...args], { stdio: "inherit" });
   if (child.error) {
-    process.stderr.write(`browsight server failed: ${String(child.error)}\n`);
+    output.error(`browsight server failed: ${String(child.error)}\n`);
     return 1;
   }
   return child.status ?? 0;
@@ -329,7 +290,15 @@ export function runServe(args: readonly string[] = []): number {
 export async function runCli(args: readonly string[]): Promise<number> {
   const [command, ...rest] = args;
   if (command === undefined || command === "setup") {
-    await runSetup({ newPort: rest.includes("--new-port") });
+    await runSetup({ newPort: rest.includes("--new-port"), clients: parseClientFilter(rest) });
+    return 0;
+  }
+  if (command === "stop") {
+    runStop();
+    return 0;
+  }
+  if (command === "start") {
+    await runStart(parseClientFilter(rest));
     return 0;
   }
   if (command === "doctor") {
@@ -340,12 +309,12 @@ export async function runCli(args: readonly string[]): Promise<number> {
     return runServe(rest);
   }
   if (command === "help" || command === "--help" || command === "-h") {
-    process.stdout.write(
-      "browsight <command>\n\nCommands:\n  setup   Configure clients and install the extension (supports --new-port)\n  doctor  Check the local installation\n  serve   Start the MCP server (supports --idle-timeout <minutes>)\n",
+    output.write(
+      "browsight <command>\n\nCommands:\n  setup   Configure clients and install the extension (--new-port, --client=claude,cursor)\n  start   Register browsight with your MCP clients (--client=claude,cursor)\n  stop    Unregister browsight and stop any running server\n  doctor  Check the local installation\n  serve   Start the MCP server (supports --idle-timeout <minutes>)\n",
     );
     return 0;
   }
-  process.stderr.write(`unknown browsight command: ${command}\n`);
+  output.error(`unknown browsight command: ${command}\n`);
   return 1;
 }
 
@@ -374,7 +343,7 @@ if (isMain) {
       // String() would flatten a thrown object to "[object Object]".
       errMsg = inspect(err, { depth: 2 });
     }
-    process.stderr.write(`${command} failed: ${errMsg}\n`);
+    output.error(`${command} failed: ${errMsg}\n`);
     process.exit(1);
   }
 }

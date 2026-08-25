@@ -3,17 +3,23 @@
  * shape, and the small tab/origin helpers every handler needs. Kept separate so each handler module
  * stays focused on one request type.
  */
-import type { BridgeMessage, Ref } from "@browsight/shared";
+import type { BridgeMessage } from "@browsight/shared";
+import type { ContentMessage, ContentReadResult } from "./content-protocol.ts";
+
+export type { ContentReadResult };
 
 /** Send a frame back to the server over the bridge socket. Injected into each handler so the
  *  handlers never reach for the socket directly. */
 export type Send = (msg: BridgeMessage) => void;
 
-export interface ContentReadResult {
-  readonly markdown: string;
-  readonly refs: Ref[];
-  readonly hasPasswordField: boolean;
+/** How much of a page to read: which region, where to resume, and what to search for. */
+export interface ReadOptions {
+  readonly mode: "full" | "main";
+  readonly offset: number;
+  readonly query: string | null;
 }
+
+export const DEFAULT_READ: ReadOptions = { mode: "full", offset: 0, query: null };
 
 const CURRENT_TAB_KEY = "browsight.currentTab";
 
@@ -58,8 +64,14 @@ export function originOf(url: string): string {
  *  content script keeps the read's references in the page itself, so the act re-resolves them there. */
 export async function readTabContent(
   tabId: number,
-  mode: "full" | "main" = "full",
+  options: ReadOptions = DEFAULT_READ,
 ): Promise<ContentReadResult> {
   await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
-  return (await chrome.tabs.sendMessage(tabId, { kind: "read", mode })) as ContentReadResult;
+  const request: ContentMessage = {
+    kind: "read",
+    mode: options.mode,
+    offset: options.offset,
+    query: options.query ?? "",
+  };
+  return (await chrome.tabs.sendMessage(tabId, request)) as ContentReadResult;
 }

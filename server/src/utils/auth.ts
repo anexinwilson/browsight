@@ -1,3 +1,10 @@
+/**
+ * Checking the bearer token on a bridge request.
+ *
+ * Compared with `timingSafeEqual` so a wrong token takes the same time to reject whatever it looks
+ * like: a plain `===` leaks how much of a guess was correct, which is enough to recover a token one
+ * byte at a time from a process running on the same machine.
+ */
 import { timingSafeEqual } from "node:crypto";
 import type http from "node:http";
 

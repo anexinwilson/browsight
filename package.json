@@ -1,6 +1,6 @@
 {
   "name": "browsight",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "A universal, permissioned read-and-act tool that exposes your real, authenticated Chrome to any MCP client.",
   "license": "MIT",
@@ -48,10 +48,11 @@
     "scan": "node test/scans/run-all.mjs",
     "scan:sonar": "node test/scans/run-sonar.mjs",
     "scan:snyk": "node test/scans/run-snyk.mjs",
-    "scan:verify": "node test/scans/verify-sonar.mjs"
+    "scan:verify": "node test/scans/verify-sonar.mjs",
+    "postbuild": "node scripts/postbuild.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.8",
+    "@biomejs/biome": "^2.5.10",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.2.0",
     "cross-env": "^10.1.0",

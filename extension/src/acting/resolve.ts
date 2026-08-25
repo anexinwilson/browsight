@@ -7,11 +7,20 @@
 import type { Recipe, Ref, Sentinel } from "@browsight/shared";
 import { safeName, safeRole } from "../perception/accessibility.ts";
 import { INTERACTIVE_SELECTOR, isHidden } from "../perception/dom.ts";
+import { elementForId } from "../perception/identity.ts";
+import {
+  type DocumentSignature,
+  documentSignature,
+  EMPTY_SIGNATURE,
+} from "../perception/signature.ts";
+import type { SnapshotMode } from "../perception/snapshot.ts";
 
 interface RefState {
   refs: Ref[];
-  elements: Map<number, Element>;
   markdown: string;
+  signature: DocumentSignature;
+  /** How the basis was built, so the snapshot an action compares against is built the same way. */
+  mode: SnapshotMode;
   hasSnapshot: boolean;
 }
 
@@ -24,16 +33,28 @@ interface RefState {
  */
 function refState(): RefState {
   const g = globalThis as typeof globalThis & { __browsightRefs?: RefState };
-  g.__browsightRefs ??= { refs: [], elements: new Map(), markdown: "", hasSnapshot: false };
+  g.__browsightRefs ??= {
+    refs: [],
+    markdown: "",
+    signature: EMPTY_SIGNATURE,
+    mode: "full",
+    hasSnapshot: false,
+  };
   return g.__browsightRefs;
 }
 
 /** Remember the element map from the most recent snapshot so refs resolve at act time. */
-export function rememberSnapshot(refs: Ref[], elements: Map<number, Element>, markdown = ""): void {
+export function rememberSnapshot(
+  refs: Ref[],
+  markdown = "",
+  signature: DocumentSignature = documentSignature(document),
+  mode: SnapshotMode = "full",
+): void {
   const s = refState();
   s.refs = refs;
-  s.elements = elements;
   s.markdown = markdown;
+  s.signature = signature;
+  s.mode = mode;
   s.hasSnapshot = true;
 }
 
@@ -43,13 +64,19 @@ export function rememberSnapshot(refs: Ref[], elements: Map<number, Element>, ma
 export function rememberedSnapshot():
   | {
       readonly refs: Ref[];
-      readonly elements: Map<number, Element>;
       readonly markdown: string;
+      readonly signature: DocumentSignature;
+      readonly mode: SnapshotMode;
     }
   | undefined {
   const state = refState();
   return state.hasSnapshot
-    ? { refs: state.refs, elements: state.elements, markdown: state.markdown }
+    ? {
+        refs: state.refs,
+        markdown: state.markdown,
+        signature: state.signature,
+        mode: state.mode,
+      }
     : undefined;
 }
 
@@ -134,13 +161,15 @@ function allInteractive(root: Document | ShadowRoot): Element[] {
 /** Resolve a `#id` to a live element: the stored element handle first, then durable-recipe matching
  *  (which descends shadow roots). Accepts the id with or without the leading "#". */
 export function resolveRef(ref: string): Resolution {
-  const { refs, elements } = refState();
+  const { refs } = refState();
   const id = Number(ref.replace(/^#/, ""));
   const recipe = refs.find((r) => r.id === id)?.recipe;
   // The stored element is a direct handle, so it works through shadow DOM / iframes for free and
   // survives a re-render that only moves the node; the role+name re-check below rejects it if the
   // node was recycled into a different control. The recipe re-resolution is the fallback.
-  const stored = elements.get(id);
+  // Every element numbered during this page load stays resolvable, so a reference taken from an
+  // earlier read still works after a narrower one (a query, or a later window of a long page).
+  const stored = elementForId(id);
   // Fast path: the stored element, but only if it still looks like the same control, a recycled
   // (virtualized) row keeps the same connected node while changing its accessible name.
   if (stored?.isConnected && (!recipe || storedElementMatches(stored, recipe))) {

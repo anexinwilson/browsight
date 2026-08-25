@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ActionTimeoutError, withDeadline } from "../../../extension/src/messaging/act.ts";
+import { ActionTimeoutError, withDeadline } from "../../../extension/src/messaging/deadline.ts";
 
 test("withDeadline reports the action stage instead of hanging", async () => {
   const never = new Promise<never>(() => {});

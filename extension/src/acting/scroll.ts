@@ -1,6 +1,25 @@
+/**
+ * Deciding what to scroll, and how far.
+ *
+ * A page is rarely one scrollable thing. Application shells put the real content in an inner pane,
+ * and a naive "scroll the document" reaches the wrong surface, while picking any scrollable element
+ * can land on a sliver of a container with two pixels of slack. A surface therefore qualifies only
+ * if it can advance a meaningful part of the step being asked for, and the task-local surface (the
+ * focused or centred one) is preferred over the document when both can.
+ */
 import { INTERACTIVE_SELECTOR } from "../perception/dom.ts";
 
-export type ScrollDirection = "up" | "down" | "top" | "bottom";
+/**
+ * The directions a viewport scroll accepts. The type is derived from the list so the two can never
+ * disagree, and `isScrollDirection` narrows a string from the wire without an unchecked assertion.
+ */
+export const SCROLL_DIRECTIONS = ["up", "down", "top", "bottom"] as const;
+
+export type ScrollDirection = (typeof SCROLL_DIRECTIONS)[number];
+
+export function isScrollDirection(value: string): value is ScrollDirection {
+  return (SCROLL_DIRECTIONS as readonly string[]).includes(value);
+}
 
 export interface ScrollResult {
   readonly movedPx: number;
@@ -141,8 +160,26 @@ function favoredAncestors(doc: Document): Set<Element> {
   return favored;
 }
 
+/** How far one scroll step moves a surface: an overlapping 80% of its visible height. */
+function pageStep(el: Element): number {
+  const view = el.ownerDocument.defaultView;
+  return Math.round((el.clientHeight || view?.innerHeight || 0) * 0.8);
+}
+
+/**
+ * Whether this surface can actually satisfy the scroll being asked for.
+ *
+ * Qualifying on "has more than one pixel left" let a container with a couple of pixels of slack
+ * outrank the document root, and containers are preferred over the root, so the page reported
+ * "scroll did not move, the page is at the bottom" while thousands of pixels remained below. The
+ * requirement is therefore expressed in terms of the step about to be taken: a surface that cannot
+ * advance a meaningful part of one page is not the surface the caller meant.
+ */
 function isScrollableContainer(el: Element, direction: ScrollDirection): boolean {
-  if (el.scrollHeight <= el.clientHeight + 2 || remainingScroll(el, direction) <= 1) {
+  if (el.scrollHeight <= el.clientHeight + 2) {
+    return false;
+  }
+  if (remainingScroll(el, direction) < Math.max(1, pageStep(el) / 2)) {
     return false;
   }
   const view = el.ownerDocument.defaultView;
@@ -216,8 +253,7 @@ export function findScrollTarget(
 /** Scroll an already-selected surface without rescanning the composed tree. */
 export function scrollSurface(target: Element, direction: ScrollDirection): number {
   const startTop = scrollPosition(target);
-  const view = target.ownerDocument.defaultView;
-  const page = Math.round((target.clientHeight || view?.innerHeight || 0) * 0.8);
+  const page = pageStep(target);
   if (direction === "bottom") {
     target.scrollTo({ top: target.scrollHeight });
   } else if (direction === "top") {

@@ -126,3 +126,23 @@ test("composed mutation observer notices lazy content inside shadow DOM", async 
 
   assert.ok(growthEvents > 0);
 });
+
+test("a container with a sliver of slack does not outrank a page with room to scroll", () => {
+  // Regression: qualifying on "more than one pixel remaining" let a nearly-exhausted inner
+  // container win over the document root, so a page with thousands of pixels below reported
+  // "scroll did not move, the page is at the bottom".
+  document.body.innerHTML = `<div id="sliver" style="overflow-y: auto"></div>`;
+  const sliver = document.getElementById("sliver") as HTMLElement;
+  Object.defineProperty(sliver, "clientHeight", { value: 600, configurable: true });
+  Object.defineProperty(sliver, "scrollHeight", { value: 602, configurable: true });
+  sliver.scrollTop = 0;
+
+  const root = document.scrollingElement ?? document.documentElement;
+  Object.defineProperty(root, "clientHeight", { value: 800, configurable: true });
+  Object.defineProperty(root, "scrollHeight", { value: 6000, configurable: true });
+  root.scrollTop = 0;
+
+  const target = findScrollTarget(document, "down");
+  assert.equal(target.kind, "document");
+  assert.notEqual(target.element, sliver);
+});

@@ -7,9 +7,9 @@ import type { ActResponse } from "@browsight/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import pkg from "../package.json" with { type: "json" };
-import type { Bridge } from "./bridge.ts";
-import { estimateTokens, isLoginWall, stripSecrets } from "./extract.ts";
-import { formatTabs } from "./tabs.ts";
+import type { Bridge } from "./bridge/bridge.ts";
+import { estimateTokens, isLoginWall, stripSecrets } from "./page/extract.ts";
+import { formatTabs } from "./page/tabs.ts";
 
 const MAX_DIFF_ITEMS = 8;
 const MAX_RESULT_REFS = 24;
@@ -45,7 +45,41 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+function refLine(r: { role: string; name: string; id: number }): string {
+  return `[${r.role} ${JSON.stringify(r.name)} #${r.id}]`;
+}
+
+/** Render a reference list, capped, noting how many did not fit. */
+function refSection(refs: ActResponse["refs"], overflowNote: (count: number) => string): string {
+  if (refs.length === 0) {
+    return "";
+  }
+  const shown = refs.slice(0, MAX_RESULT_REFS).map(refLine).join("\n");
+  const omitted = refs.length - Math.min(refs.length, MAX_RESULT_REFS);
+  const overflow = omitted > 0 ? `\n${overflowNote(omitted)}` : "";
+  return `\n\n${shown}${overflow}`;
+}
+
+/**
+ * A navigation lands on a different document, so diffing it against the previous one measures the
+ * gap between two unrelated pages rather than anything the action did: the whole old page reads as
+ * removed and the whole new one as appeared, which is pages of noise the caller then has to re-read
+ * past. Naming the controls actually on the new page is both shorter and directly actionable.
+ */
+function formatNavigated(res: ActResponse): string {
+  const section = refSection(
+    res.refs,
+    (count) => `[${count} more controls here; call browser_read for the full page]`,
+  );
+  return section
+    ? `navigated to a new page${section}`
+    : "navigated to a new page; call browser_read to see it";
+}
+
 export function formatActResponse(res: ActResponse): string {
+  if (res.verdict === "navigated") {
+    return stripSecrets(formatNavigated(res));
+  }
   const changes = [
     compactList("appeared", res.diff.appeared),
     compactList("removed", res.diff.removed),
@@ -57,16 +91,12 @@ export function formatActResponse(res: ActResponse): string {
     [...res.diff.appeared, ...res.diff.changed].map((item) => baseDiffKey(item)),
   );
   const matchingRefs = res.refs.filter((r) => relevant.has(refKey(r.role, r.name)));
-  const refsList = matchingRefs
-    .slice(0, MAX_RESULT_REFS)
-    .map((r) => `[${r.role} ${JSON.stringify(r.name)} #${r.id}]`)
-    .join("\n");
-  const omittedRefs = matchingRefs.length - Math.min(matchingRefs.length, MAX_RESULT_REFS);
-  const refsSuffix =
-    omittedRefs > 0 ? `\n[${omittedRefs} additional changed controls omitted]` : "";
   const summary = changes ? `${res.verdict}: ${changes}` : res.verdict;
-  const refsSection = refsList ? `\n\n${refsList}${refsSuffix}` : "";
-  return stripSecrets(`${summary}${refsSection}`);
+  const section = refSection(
+    matchingRefs,
+    (count) => `[${count} additional changed controls omitted]`,
+  );
+  return stripSecrets(`${summary}${section}`);
 }
 
 /**
@@ -123,7 +153,10 @@ export function createMcpServer(bridge: Bridge, onActivity: () => void = () => {
         const extensionIsOlder = compareVersions(s.extensionVersion, pkg.version) < 0;
         lines.push(
           extensionIsOlder
-            ? `WARNING: the extension is ${s.extensionVersion} and the server is ${pkg.version}, so reload the browsight extension from Chrome menu > Extensions > Manage extensions.`
+            ? // Reloading alone cannot fix this. Chrome runs an installed copy of the extension, and
+              // only `browsight setup` refreshes that copy, so telling the user to reload sends them
+              // in circles reloading the same old code.
+              `WARNING: the extension is ${s.extensionVersion} and the server is ${pkg.version}. Run \`npx browsight setup\` to install the newer extension, then reload it from Chrome menu > Extensions > Manage extensions. Reloading without running setup will not help, because Chrome loads an installed copy that only setup updates.`
             : `WARNING: the server is ${pkg.version} and the extension is ${s.extensionVersion}, so restart your MCP client to pick up the newer server.`,
         );
       }
@@ -138,15 +171,31 @@ export function createMcpServer(bridge: Bridge, onActivity: () => void = () => {
     "browser_read",
     {
       description:
-        "Read the current Chrome tab as clean, structured context (markdown plus interactive references). Uses your real, logged-in session. Use mode = main on dense applications to focus on the primary content region and reduce tokens; full remains the safe default.",
+        "Read the current Chrome tab as clean, structured context (markdown plus interactive references). Uses your real, logged-in session. Use mode = main on dense applications to focus on the primary content region and reduce tokens; full remains the safe default. Long pages are returned one window at a time: when the result says it was truncated, pass the offset it gives you to continue from there. To pull one thing out of a long page, pass query and get back only the matching lines, searched across the entire page rather than just the first window, which is far cheaper than reading the page and scanning it yourself.",
       inputSchema: {
         url: z.string().optional(),
         mode: z.enum(["full", "main"]).optional(),
+        offset: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe("Resume a truncated read from the offset the previous result reported."),
+        query: z
+          .string()
+          .optional()
+          .describe(
+            "Return only lines containing this text (case-insensitive), searched across the whole page.",
+          ),
       },
     },
-    async ({ url, mode }) => {
+    async ({ url, mode, offset, query }) => {
       onActivity();
-      const res = await bridge.readActiveTab(url ?? null, mode ?? "full");
+      const res = await bridge.readActiveTab(url ?? null, {
+        mode: mode ?? "full",
+        offset: offset ?? 0,
+        query: query ?? null,
+      });
       if (res.sentinel) {
         return { content: [{ type: "text" as const, text: res.sentinel.hint }] };
       }
@@ -176,15 +225,21 @@ export function createMcpServer(bridge: Bridge, onActivity: () => void = () => {
     "browser_act",
     {
       description:
-        "Perform one action on the current tab and return a typed verdict plus a diff of what changed. Pass a `ref` from a prior browser_read; `fill` takes its text in `value`, `navigate` takes a URL in `value`, and `scroll` takes `value` = `more` to load lazy content (pages down until comments, replies, or feed items appear, or the page bottoms out, use this to reveal comments / infinite feeds) or a direction (up/down/top/bottom) for manual paging.",
+        "Perform one action on the current tab and return a typed verdict plus a diff of what changed. Pass a `ref` from a prior browser_read; `fill` takes its text in `value`, `navigate` takes a URL in `value`, and `scroll` takes `value` = `more` to load lazy content (pages down until comments, replies, or feed items appear, or the page bottoms out, use this to reveal comments / infinite feeds) or a direction (up/down/top/bottom) for manual paging. To fill a whole form, pass `fields` as an array of {ref, value} and leave `ref` out: every control is filled in one call and the page settles once at the end.",
       inputSchema: {
-        ref: z.string(),
+        ref: z.string().default("").describe("Omit when passing `fields`."),
         action: z.enum(["click", "fill", "navigate", "scroll"]),
         value: z
           .string()
           .optional()
           .describe(
             "Text for fill, a URL for navigate, or for scroll: `more` to load lazy content, or a direction (up/down/top/bottom).",
+          ),
+        fields: z
+          .array(z.object({ ref: z.string(), value: z.string() }))
+          .optional()
+          .describe(
+            "Fill many controls in one call, instead of one call per field. Each is resolved just before it is filled, so a re-render caused by an earlier field cannot break the later ones.",
           ),
       },
     },
@@ -194,6 +249,7 @@ export function createMcpServer(bridge: Bridge, onActivity: () => void = () => {
         ref: req.ref,
         action: req.action,
         ...(req.value !== undefined ? { value: req.value } : {}),
+        ...(req.fields !== undefined ? { fields: req.fields } : {}),
       });
       if (res.sentinel) {
         return { content: [{ type: "text" as const, text: res.sentinel.hint }] };
@@ -210,7 +266,7 @@ export function createMcpServer(bridge: Bridge, onActivity: () => void = () => {
     "browser_tabs",
     {
       description:
-        "List the open Chrome tabs and switch between them. With no argument, lists every open tab and whether each is allowed, browsight can only switch to and read sites the user has whitelisted; others are shown so you can ask the user to allow them. Pass `select` (a tab title, origin, or id) to switch to that tab; add `read: true` to switch and read the page in one call, otherwise switching is cheap and you call browser_read when you want the content. If the chosen tab isn't whitelisted, the result tells the user to allow it in the popup. browser_read and browser_act always operate on the active tab, so use this to move focus between the user's allowed sites.",
+        "List the open Chrome tabs and switch between them. Listing is very cheap and tab titles often carry the state you are after (result counts, unread counts, the current document name), so a list can answer a question outright and save a full page read. With no argument, lists every open tab and whether each is allowed, browsight can only switch to and read sites the user has whitelisted; others are shown so you can ask the user to allow them. Pass `select` (a tab title, origin, or id) to switch to that tab; add `read: true` to switch and read the page in one call, otherwise switching is cheap and you call browser_read when you want the content. If the chosen tab isn't whitelisted, the result tells the user to allow it in the popup. browser_read and browser_act always operate on the active tab, so use this to move focus between the user's allowed sites.",
       inputSchema: { select: z.string().optional(), read: z.boolean().optional() },
     },
     async ({ select, read }) => {

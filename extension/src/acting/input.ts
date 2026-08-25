@@ -166,12 +166,26 @@ export function dispatchClick(el: Element): void {
   }
   el.dispatchEvent(new PointerCtor("pointerup", pointer));
   el.dispatchEvent(new MouseCtor("mouseup", mouse));
+  // `click()` runs the element's default activation, which for a link means navigating to its href.
+  // A `javascript:` href is not a navigation but a legacy inline script, and every site with a
+  // Content-Security-Policy blocks it, logging a violation against this extension. The site's own
+  // handlers are bound to the click event, which is dispatched either way, so the event is sent
+  // directly and the blocked activation is left alone.
+  if (isJavascriptUrlLink(el)) {
+    el.dispatchEvent(new MouseCtor("click", mouse));
+    return;
+  }
   const clickable = el as HTMLElement;
   if (typeof clickable.click === "function") {
     clickable.click();
   } else {
     el.dispatchEvent(new MouseCtor("click", mouse));
   }
+}
+
+/** True for `<a>`/`<area>` whose href is a `javascript:` URL rather than a real destination. */
+function isJavascriptUrlLink(el: Element): boolean {
+  return el.getAttribute("href")?.trimStart().toLowerCase().startsWith("javascript:") ?? false;
 }
 
 /** Location of the document being acted on, used to notice a navigation the action triggered. */

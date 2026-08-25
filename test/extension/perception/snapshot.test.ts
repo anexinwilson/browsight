@@ -43,6 +43,7 @@ Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
 });
 
 // Import the module under test
+import { resetIdentity } from "../../../extension/src/perception/identity.ts";
 import { buildSnapshot } from "../../../extension/src/perception/snapshot.ts";
 
 test("large snapshots are capped with an explicit truncation marker", () => {
@@ -59,6 +60,8 @@ test("large snapshots are capped with an explicit truncation marker", () => {
 function clearDOM() {
   document.title = "";
   document.body.innerHTML = "";
+  // Reference numbering lives for the life of a page, so replacing the document replaces it too.
+  resetIdentity();
 }
 
 test("Document Title: test buildSnapshot() with title present vs absent", () => {
@@ -416,4 +419,136 @@ test("main mode drops framing regions when a page has no main landmark", () => {
   const full = buildSnapshot(document, { mode: "full" });
   assert.match(full.markdown, /Category One/);
   assert.match(full.markdown, /Actual Result/);
+});
+
+test("a truncated read reports where to resume, and the next window continues from there", () => {
+  clearDOM();
+  document.body.innerHTML = Array.from(
+    { length: 1200 },
+    (_, index) => `<a href="/item-${index}">Unique result ${index} ${"x".repeat(30)}</a>`,
+  ).join("");
+
+  const first = buildSnapshot(document);
+  assert.equal(first.truncated, true);
+  assert.ok(first.nextOffset > 0);
+  assert.match(first.markdown, /offset=\d+/);
+
+  const second = buildSnapshot(document, { offset: first.nextOffset });
+  assert.match(second.markdown, /continued from offset/);
+  // The second window starts where the first stopped rather than repeating it.
+  const firstIds = first.refs.map((r) => r.id);
+  const secondIds = second.refs.map((r) => r.id);
+  assert.ok(secondIds.length > 0);
+  assert.equal(
+    firstIds.some((id) => secondIds.includes(id)),
+    false,
+  );
+  assert.ok(Math.min(...secondIds) > Math.max(...firstIds));
+});
+
+test("reference ids mean the same element whichever window they came from", () => {
+  clearDOM();
+  document.body.innerHTML = Array.from(
+    { length: 1200 },
+    (_, index) => `<a href="/item-${index}">Unique result ${index} ${"x".repeat(30)}</a>`,
+  ).join("");
+
+  const paged = buildSnapshot(document, { offset: buildSnapshot(document).nextOffset });
+  const whole = buildSnapshot(document, { query: "Unique result" });
+  for (const ref of paged.refs) {
+    const sameId = whole.refs.find((r) => r.id === ref.id);
+    if (sameId) {
+      assert.equal(sameId.name, ref.name);
+    }
+  }
+});
+
+test("a query searches the whole page, including past where a plain read stops", () => {
+  clearDOM();
+  document.body.innerHTML = `${Array.from(
+    { length: 1200 },
+    (_, index) => `<a href="/item-${index}">Filler ${index} ${"x".repeat(30)}</a>`,
+  ).join("")}<a href="/needle">Findable needle link</a>`;
+
+  const plain = buildSnapshot(document);
+  assert.equal(plain.markdown.includes("Findable needle link"), false);
+
+  const found = buildSnapshot(document, { query: "findable needle" });
+  assert.match(found.markdown, /Findable needle link/);
+  assert.equal(found.refs.length, 1);
+  assert.match(found.markdown, /showing only lines matching/);
+});
+
+test("a query that matches nothing returns no references rather than the page", () => {
+  clearDOM();
+  document.body.innerHTML = `<a href="/a">Alpha</a><a href="/b">Beta</a>`;
+  const result = buildSnapshot(document, { query: "nothing here" });
+  assert.deepEqual(result.refs, []);
+  assert.equal(result.markdown.includes("Alpha"), false);
+});
+
+test("a page with no main landmark says so and keeps its real content", () => {
+  clearDOM();
+  // Regression: an earlier version guessed a stand-in landmark when no `main` was declared. On a
+  // storefront the highest-scoring container is often a link-dense sponsored carousel, so the guess
+  // returned only ads while still reporting "focused on primary content" — a wrong answer that was
+  // indistinguishable from a right one. Reporting the absence honestly is the correct behaviour.
+  document.body.innerHTML = `
+    <div role="list"><a href="/ad1">Sponsored Ad one</a><a href="/ad2">Sponsored Ad two</a></div>
+    <div><a href="/r1">Organic result one</a><a href="/r2">Organic result two</a></div>
+  `;
+  const result = buildSnapshot(document, { mode: "main" });
+  assert.match(result.markdown, /no primary landmark/);
+  assert.match(result.markdown, /Organic result one/);
+  assert.match(result.markdown, /Sponsored Ad one/);
+});
+
+test("a declared main landmark is still trusted and focused", () => {
+  clearDOM();
+  document.body.innerHTML = `
+    <nav><a href="/nav">Navigation link</a></nav>
+    <main><a href="/post">Real content post</a></main>
+  `;
+  const result = buildSnapshot(document, { mode: "main" });
+  assert.match(result.markdown, /focused on primary content/);
+  assert.match(result.markdown, /Real content post/);
+  assert.equal(result.markdown.includes("Navigation link"), false);
+});
+
+test("a control keeps its id across reads, whatever the read asks for", () => {
+  clearDOM();
+  document.body.innerHTML = `
+    <nav><a href="/nav">Navigation link</a></nav>
+    <main><button>Apply filter</button><a href="/x">Some result</a></main>
+  `;
+  const idOf = (markdown: string, name: string): string => {
+    const marker = `"${name}" #`;
+    const at = markdown.indexOf(marker);
+    return at === -1 ? "" : (markdown.slice(at + marker.length).split("]")[0] ?? "");
+  };
+
+  const full = buildSnapshot(document);
+  const main = buildSnapshot(document, { mode: "main" });
+  const searched = buildSnapshot(document, { query: "Apply filter" });
+
+  const id = idOf(full.markdown, "Apply filter");
+  assert.notEqual(id, "");
+  // The same control was previously renumbered by each of these, so a reference taken from one read
+  // could act on a different control after another.
+  assert.equal(idOf(main.markdown, "Apply filter"), id);
+  assert.equal(idOf(searched.markdown, "Apply filter"), id);
+});
+
+test("a reference from an earlier read still resolves after a narrower one", async () => {
+  clearDOM();
+  document.body.innerHTML = `<button>Only button</button><a href="/x">Only link</a>`;
+  const { elementForId } = await import("../../../extension/src/perception/identity.ts");
+
+  const full = buildSnapshot(document);
+  const linkId = Number(full.markdown.match(/"Only link" #(\d+)/)?.[1]);
+  assert.ok(Number.isInteger(linkId));
+
+  // A query read mentions only the button, but the link was numbered earlier and stays resolvable.
+  buildSnapshot(document, { query: "Only button" });
+  assert.equal(elementForId(linkId)?.textContent, "Only link");
 });

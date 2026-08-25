@@ -1,17 +1,10 @@
-import { TIMER_OPTIONS, type Tier } from "./permissions/policy.ts";
 /**
  * The options page: manage every grant in a table, and add a site by URL. The pure decisions live
  * in `policy.ts`; this page is the management UI over `chrome.storage` + host permissions.
  */
+import type { Tier } from "./permissions/policy.ts";
 import { grantSite, listGrants, revokeSite } from "./permissions/storage.ts";
-
-function el<T extends HTMLElement>(id: string): T {
-  const node = document.getElementById(id);
-  if (!node) {
-    throw new Error(`missing #${id}`);
-  }
-  return node as T;
-}
+import { el, renderTimerOptions } from "./ui/elements.ts";
 
 function setStatus(text: string): void {
   el<HTMLDivElement>("status").textContent = text;
@@ -48,12 +41,7 @@ async function render(): Promise<void> {
 
 async function init(): Promise<void> {
   const timer = el<HTMLSelectElement>("timer");
-  for (const opt of TIMER_OPTIONS) {
-    const o = document.createElement("option");
-    o.value = String(opt.ms);
-    o.textContent = opt.label;
-    timer.append(o);
-  }
+  renderTimerOptions(timer);
   el<HTMLButtonElement>("add").addEventListener("click", () => {
     setStatus("");
     const raw = el<HTMLInputElement>("origin").value.trim();

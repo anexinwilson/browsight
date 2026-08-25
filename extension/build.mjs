@@ -59,8 +59,9 @@ await build({
   format: "esm",
 });
 
-// The published version lives in the root package.json. Stamping it into the manifest at build
-// time keeps the extension, the server and npm reporting one number instead of three that drift.
+// The version lives only in the root package.json and is stamped in here. The source manifest
+// deliberately carries no version field: a second copy drifted, and a manifest claiming one version
+// while the server reported another is exactly what `browser_status` warns users about.
 const manifest = JSON.parse(await readFile("src/manifest.json", "utf8"));
 const { version } = JSON.parse(await readFile("../package.json", "utf8"));
 await writeFile(

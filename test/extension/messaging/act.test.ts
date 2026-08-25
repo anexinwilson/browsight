@@ -59,7 +59,8 @@ const chromeMock: any = {
 (globalThis as any).chrome = chromeMock;
 
 // Import target handleAct
-import { ActionTimeoutError, handleAct } from "../../../extension/src/messaging/act.ts";
+import { handleAct } from "../../../extension/src/messaging/act.ts";
+import { ActionTimeoutError } from "../../../extension/src/messaging/deadline.ts";
 
 function createSend() {
   const sent: any[] = [];

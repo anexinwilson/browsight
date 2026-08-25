@@ -92,6 +92,9 @@ Open a site, click the Browsight icon, and choose **Read-only** or **Full contro
 npx browsight                    # same as setup, the default command
 npx browsight setup              # configure clients and install the extension
 npx browsight setup --new-port   # move to a free port if the old one is stuck
+npx browsight setup --client=claude,cursor   # register only these MCP clients
+npx browsight stop               # turn it off, it stays off until you start it
+npx browsight start              # turn it back on
 npx browsight doctor             # check the installation end to end
 npx browsight serve              # start the server manually
 ```
@@ -103,6 +106,7 @@ npx browsight serve              # start the server manually
 ```
 [ok] server built (server/dist/index.mjs)
 [ok] extension built (extension/dist/manifest.json)
+[ok] installed extension matches the build
 [ok] bridge config written (~/.browsight/bridge.json)
 [ok] extension connection.json written
 [ok] MCP server registered in a client config
@@ -171,10 +175,10 @@ Browsight is your own browser, with your session and your history, so approved s
 ## 5. Tools
 
 ```
-browser_read { mode? }                 Read the selected tab (full or main)
-browser_act { ref, action, value? }    Click, fill, navigate, scroll
-browser_tabs { select?, read? }        List or switch to an approved tab
-browser_status { reload? }             Connection health and active grants
+browser_read { mode?, query?, offset? }        Read the tab, search it, or continue a long one
+browser_act { ref, action, value?, fields? }   Click, fill, navigate, scroll; fields fills a form
+browser_tabs { select?, read? }                List or switch to an approved tab
+browser_status { reload? }                     Connection health and active grants
 ```
 
 ---
@@ -223,7 +227,7 @@ flowchart LR
 | Extension | Chrome MV3, service worker, no `debugger` permission |
 | Page reading | Accessibility tree (roles + names, not raw HTML) |
 | Contracts | Zod schemas shared between server and extension |
-| Tests | `node:test` + jsdom, 249 tests across 40 files |
+| Tests | `node:test` + jsdom, 342 tests across 51 files |
 | Security scanning | Snyk SCA and SAST, SonarCloud, Gitleaks |
 | CI/CD | GitHub Actions with SHA-pinned actions, npm publish with provenance over OIDC |
 
@@ -294,7 +298,7 @@ A page that handles a key itself keeps control: if it calls `preventDefault` on 
 | Static analysis | Snyk Code | Injection, unsafe deserialization, hardcoded secrets |
 | Secret scanning | gitleaks | Full git history on every push and PR |
 | Code quality | SonarCloud | Quality gate, coverage gate (80% minimum) |
-| Tests | `node:test` | 249 tests, ~96% line coverage, LCOV fed to SonarCloud |
+| Tests | `node:test` | 342 tests, ~97% line coverage, LCOV fed to SonarCloud |
 | Type checking | `tsc` | Every workspace including the test suite |
 | Lint | Biome | Formatting and correctness across the monorepo |
 
@@ -308,13 +312,12 @@ The publish job runs only after every check above passes. The order in `.github/
 2. Snyk and SonarCloud (parallel)
 3. npm publish (only on `main`, only if green)
 
-Hardening applied to the pipeline itself:
+What protects the pipeline itself:
 
 - **OIDC authentication to npm.** The workflow uses GitHub's OIDC token to authenticate, so there is no long-lived npm token stored in secrets. Nothing to exfiltrate.
 - **npm provenance.** Published with `--provenance`. npm shows a signed attestation linking the tarball to the exact commit SHA and workflow run. Verifiable by anyone.
 - **`npm ci --ignore-scripts`.** Install scripts from dependencies do not run on the build machine.
 - **Actions pinned to commit SHAs.** Every third-party action is referenced by SHA, not a mutable tag. A tag can be silently repointed; a SHA cannot.
-- **Dependabot.** Keeps npm dependencies and GitHub Actions up to date.
 
 ### Running scans locally
 

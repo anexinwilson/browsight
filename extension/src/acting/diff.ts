@@ -53,13 +53,21 @@ export function computeDiff(before: readonly Ref[], after: readonly Ref[]): Diff
   return { appeared, removed, changed };
 }
 
-/** Classify what an action did, from the before/after snapshots and whether a fill stuck. */
+/**
+ * Classify what an action did, from the before/after snapshots and whether a fill stuck.
+ *
+ * `contentChanged` comes from a count of the live DOM rather than the emitted markdown. The markdown
+ * is capped, so on a dense page everything below the cap is missing from it and two genuinely
+ * different pages compare equal; that made a scroll which loaded a thousand comments report
+ * "no change". The string comparison stays as the fine-grained signal for everything inside the cap.
+ */
 export function selectVerdict(
   action: Action,
   beforeMarkdown: string,
   afterMarkdown: string,
   valueSet: boolean,
   navigated = false,
+  contentChanged = false,
 ): Verdict {
   // A URL change outranks every other signal. Submitting a form by pressing Enter inside it is a
   // fill that leaves the page entirely, and reporting that as "value_set" tells the caller the
@@ -69,6 +77,9 @@ export function selectVerdict(
   }
   if (action === "fill" && valueSet) {
     return "value_set";
+  }
+  if (contentChanged) {
+    return "dom_changed";
   }
   return beforeMarkdown === afterMarkdown ? "no_change" : "dom_changed";
 }

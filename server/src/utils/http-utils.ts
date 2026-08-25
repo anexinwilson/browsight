@@ -1,3 +1,10 @@
+/**
+ * Reading a request body safely.
+ *
+ * The bridge is loopback-only but still parses input from another process, so the body is capped
+ * before it is buffered rather than after. Failures are typed as `HttpError` so the caller can
+ * answer with the right status instead of turning a malformed body into a 500.
+ */
 import type http from "node:http";
 
 const MAX_PAYLOAD = 32 * 1024 * 1024; // 32MB
